@@ -51,9 +51,12 @@ impl Default for GraphicsSettings {
             width: 1280,
             height: 800,
             scale: 100,
-            samples: 4,
+            // Phones: MSAA textures are stored rather than resolved on-tile by
+            // this renderer, and GPU occlusion culling costs more than it saves
+            // on mobile GPUs. Both stay available in the menu.
+            samples: if cfg!(target_os = "android") { 1 } else { 4 },
             fps: 0,
-            occlusion: true,
+            occlusion: !cfg!(target_os = "android"),
             hour: 12.,
             day_speed: 60,
             ambient_level: None,
@@ -199,10 +202,15 @@ fn setup(
     if !supported_msaa.contains(&settings.samples) {
         settings.samples = 1;
     }
-    window
-        .resolution
-        .set_physical_resolution(settings.width, settings.height);
-    window.present_mode = PresentMode::AutoNoVsync;
+    // Android surfaces always fill the screen; SkateActivity picks their size.
+    if !cfg!(target_os = "android") {
+        window
+            .resolution
+            .set_physical_resolution(settings.width, settings.height);
+    }
+    // Android paces frames to the display mode SkateActivity requests (60 Hz by
+    // default); tearing-free vsync is the only reliable mode there.
+    window.present_mode = if cfg!(target_os = "android") { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
     let size = settings.internal_size(window.physical_size());
     let mut image = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8UnormSrgb, None);
     image.sampler = ImageSampler::linear();
@@ -501,7 +509,7 @@ fn apply(
     mut cameras: Query<(Entity, &mut Msaa), With<Camera3d>>,
     mut previous: Local<Option<GraphicsSettings>>,
 ) {
-    if previous
+    if !cfg!(target_os = "android") && previous
         .as_ref()
         .is_none_or(|p| p.width != menu.settings.width || p.height != menu.settings.height)
     {
@@ -630,6 +638,7 @@ fn labels(
             }
         } else {
             match label.0 {
+                0 if cfg!(target_os = "android") => "Resolution          set in the app launcher".into(),
                 0 => format!("Resolution          {} x {}", s.width, s.height),
                 1 => format!(
                     "Internal resolution   {}%  ({} x {})",

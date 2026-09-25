@@ -1,0 +1,112 @@
+name: Android APK
+on:
+  push:
+    branches: [main, 'claude/android-**']
+    paths-ignore: ['docs/**', '**.md']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      TARGET: aarch64-linux-android
+      API: '30'
+    steps:
+      - name: Free runner disk space for the Bevy release build
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift /opt/hostedtoolcache/CodeQL
+          df -h /
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: android-arm64
+          cache-on-failure: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+      - name: Configure NDK toolchain
+        run: |
+          NDK="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          BIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$BIN/${TARGET}${API}-clang"
+          {
+            echo "ANDROID_NDK_HOME=$NDK"
+            echo "ANDROID_NDK_ROOT=$NDK"
+            echo "NDK_BIN=$BIN"
+            echo "CC_aarch64_linux_android=$BIN/${TARGET}${API}-clang"
+            echo "CXX_aarch64_linux_android=$BIN/${TARGET}${API}-clang++"
+            echo "AR_aarch64_linux_android=$BIN/llvm-ar"
+            echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$BIN/${TARGET}${API}-clang"
+            echo "LIBCXX_SHARED=$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$TARGET/libc++_shared.so"
+          } >> "$GITHUB_ENV"
+          echo "NDK: $NDK"
+      - name: Build engine library (arm64-v8a)
+        run: cargo build --locked --target "$TARGET" --profile android -p skate-android
+      - name: Check library entry points
+        run: |
+          LIB="target/$TARGET/android/libskate3rust.so"
+          ls -lh "$LIB"
+          "$NDK_BIN/llvm-nm" -D --defined-only "$LIB" > symbols.txt
+          grep -E ' android_main$' symbols.txt
+          grep -E ' Java_com_sk8engine_skate3rust_SkateActivity_nativePad$' symbols.txt
+          grep -E ' GameActivity_' symbols.txt || true
+          "$NDK_BIN/llvm-readelf" -d "$LIB" | grep NEEDED
+      - name: Stage native libraries
+        run: |
+          JNI=android/app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$JNI"
+          cp "target/$TARGET/android/libskate3rust.so" "$JNI/"
+          cp "$LIBCXX_SHARED" "$JNI/"
+      # A stable signing key lets new builds install over old ones (keeping
+      # the copied game data). Configure the four secrets to use your own key;
+      # otherwise the cached CI debug key is reused between runs.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+      - name: Decode release keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        if: env.KEYSTORE_B64 != ''
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "SKATE_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      - name: Build APK
+        working-directory: android
+        env:
+          SKATE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          SKATE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          SKATE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: gradle --no-daemon assembleRelease
+      - name: Name APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/skate3rust-android-arm64.apk
+          sha256sum dist/skate3rust-android-arm64.apk | tee dist/skate3rust-android-arm64.apk.sha256
+          ls -lh dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: skate3rust-android-arm64
+          retention-days: 14
+          path: dist/
+      - name: Publish android-experimental prerelease
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android-experimental --cleanup-tag --yes || true
+          gh release create android-experimental dist/skate3rust-android-arm64.apk dist/skate3rust-android-arm64.apk.sha256 \
+            --prerelease --target "$GITHUB_SHA" --title "Android experimental (arm64)" \
+            --notes "Built from ${GITHUB_SHA} (${GITHUB_REF_NAME}). Install the APK, then copy the data folder from a Windows copy that finished setup. See android/README.md."

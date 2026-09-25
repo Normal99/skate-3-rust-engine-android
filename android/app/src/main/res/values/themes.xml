@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Skate" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#FF0B1016</item>
+        <item name="colorPrimary">#FF2A8C8C</item>
+        <item name="colorAccent">#FF4FD8D8</item>
+    </style>
+    <style name="Theme.Skate.Game">
+        <item name="android:windowBackground">#FF000000</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowLayoutInDisplayCutoutMode">shortEdges</item>
+    </style>
+</resources>

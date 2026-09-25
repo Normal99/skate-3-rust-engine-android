@@ -1,5 +1,7 @@
 //! Each portable copy owns its installation; explicit --assets is for development.
-use std::{path::{Path, PathBuf}, process::Command};
+use std::path::{Path, PathBuf};
+#[cfg(not(target_os = "android"))]
+use std::process::Command;
 
 fn installed(base: &Path) -> Result<Option<(PathBuf, serde_json::Value)>, String> {
     let bytes = match std::fs::read(base.join("installation.json")) {
@@ -27,6 +29,31 @@ fn installed(base: &Path) -> Result<Option<(PathBuf, serde_json::Value)>, String
 
 pub(crate) fn asset_root() -> Result<PathBuf, String> {
     if std::env::args_os().any(|arg| arg == "--assets") { return Ok(PathBuf::from("assets")); }
+    #[cfg(target_os = "android")]
+    return android_asset_root();
+    #[cfg(not(target_os = "android"))]
+    desktop_asset_root()
+}
+
+/// Phones cannot run the ISO setup. Players copy the `data` folder produced by
+/// a completed Windows setup (or a prepared `assets` folder) to the device.
+#[cfg(target_os = "android")]
+fn android_asset_root() -> Result<PathBuf, String> {
+    let root = crate::android::data_root();
+    let data = root.join("data");
+    // Receipts are skipped: copies made through MTP keep sizes, but the check
+    // exists to trigger the Windows setup helper, which phones do not have.
+    if let Some((assets, _)) = installed(&data)? {
+        if assets.join("private/game.json").is_file() { return Ok(assets); }
+    }
+    for assets in [root.join("assets"), data.join("assets")] {
+        if assets.join("private/game.json").is_file() { return Ok(assets); }
+    }
+    Err(format!("No prepared Skate 3 assets in {}. Copy the `data` folder from a Windows copy that finished setup.", root.display()))
+}
+
+#[cfg(not(target_os = "android"))]
+fn desktop_asset_root() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let root = exe.parent().ok_or("No executable directory")?;
     let base = root.join("data");
@@ -74,6 +101,7 @@ pub(crate) fn asset_root() -> Result<PathBuf, String> {
     Ok(assets)
 }
 
+#[cfg_attr(target_os = "android", allow(dead_code))]
 fn customiser_current(assets: &Path, expected: Option<&str>) -> bool {
     expected.is_none_or(|expected| {
         let degraded = std::fs::read(assets.join("private/customisation/customiser-availability.json")).ok()
@@ -106,6 +134,7 @@ fn customiser_current(assets: &Path, expected: Option<&str>) -> bool {
 
 // Cheap launch-time completeness check. Setup verifies SHA-256 before reuse;
 // hashing every map on every game launch would read gigabytes unnecessarily.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 fn receipt_present(root: &Path, files: &serde_json::Value) -> bool {
     files.as_object().is_some_and(|files| !files.is_empty() && files.iter().all(|(name, entry)| {
         let relative = Path::new(name);

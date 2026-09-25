@@ -47,6 +47,8 @@ mod replay;
 mod world;
 mod grind_world;
 mod skate_world;
+#[cfg(target_os = "android")]
+mod android;
 
 fn main() -> bevy::app::AppExit {
     match updater::recover() {

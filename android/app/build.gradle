@@ -1,0 +1,61 @@
+plugins {
+    id "com.android.application"
+}
+
+// Optional stable release key (keeps in-place updates working between CI
+// builds). Without it the build is signed with the machine's debug key.
+def keystorePath = System.getenv("SKATE_KEYSTORE")
+
+android {
+    namespace "com.sk8engine.skate3rust"
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.sk8engine.skate3rust"
+        // Vulkan 1.1 + window metrics APIs. The S20 family is updatable to Android 13.
+        minSdk 30
+        targetSdk 35
+        versionCode Integer.parseInt(System.getenv("GITHUB_RUN_NUMBER") ?: "1")
+        versionName "0.1.0-android." + (System.getenv("GITHUB_RUN_NUMBER") ?: "local")
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    signingConfigs {
+        if (keystorePath) {
+            release {
+                storeFile file(keystorePath)
+                storePassword System.getenv("SKATE_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("SKATE_KEY_ALIAS")
+                keyPassword System.getenv("SKATE_KEY_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig keystorePath ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    packaging {
+        jniLibs {
+            // Store the game library uncompressed so Android maps it directly.
+            useLegacyPackaging false
+        }
+    }
+}
+
+dependencies {
+    // Must match the GameActivity C glue compiled into android-activity 0.6.1.
+    implementation "androidx.games:games-activity:4.4.0"
+    implementation "androidx.appcompat:appcompat:1.7.0"
+    implementation "androidx.core:core:1.13.1"
+}

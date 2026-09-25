@@ -13,7 +13,7 @@ pub(crate) enum DeviceError {
     Disconnected,
     State(u32),
     Capabilities(u32),
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "android")))]
     UnsupportedPlatform,
 }
 
@@ -137,7 +137,16 @@ pub(crate) fn poll_cached(
     assert!(index < 4);
     #[cfg(windows)]
     return windows::poll(index as u32, cache);
-    #[cfg(not(windows))]
+    // SkateActivity already merges Android gamepads and touch controls into
+    // XInput-shaped slots; report them as standard gamepads (subtype 1).
+    #[cfg(target_os = "android")]
+    return {
+        let _ = cache;
+        crate::android::poll_pad(index)
+            .map(|(number, state)| DevicePacket { number, state, subtype: 1 })
+            .ok_or(DeviceError::Disconnected)
+    };
+    #[cfg(not(any(windows, target_os = "android")))]
     Err(DeviceError::UnsupportedPlatform)
 }
 

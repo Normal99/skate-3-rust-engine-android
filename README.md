@@ -36,6 +36,12 @@ the `data` folder beside your executable. Each freshly unpacked copy runs its
 own setup; it does not adopt another installation. In-place updates refresh
 only changed asset groups.
 
+## Android
+
+An experimental arm64 APK (tuned for the Galaxy S20 family) is built by the
+*Android APK* workflow. It uses the `data` folder from a Windows copy that
+finished setup. See [android/README.md](android/README.md).
+
 ## Build
 
 Requires Windows, Rust with the MSVC toolchain, and LLVM installed in its default

@@ -155,6 +155,12 @@ fn reader(
 }
 
 pub(crate) fn entry() -> Option<i32> {
+    // Android apps cannot re-launch themselves as a child process; the game
+    // runs in-process and panics still reach logcat and logs/latest.log.
+    if cfg!(target_os = "android") {
+        install_panic_hook();
+        return None;
+    }
     if std::env::var_os(CHILD).is_some() {
         // Entry runs before game threads. Do not let setup/relay descendants
         // accidentally pass the supervisor bypass marker to a later game launch.

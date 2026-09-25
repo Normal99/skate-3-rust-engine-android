@@ -40,8 +40,19 @@ pub(crate) fn build(
     let retail_scene = config.map.as_ref().is_some_and(|map| crate::retail_render::RetailScene::for_map(map));
     let mut app = App::new();
     crate::custom_models::register_source(&mut app);
+    #[cfg(not(target_os = "android"))]
     app.register_asset_source("mods", bevy::asset::io::AssetSourceBuilder::platform_default(
         &crate::modding::package_root().to_string_lossy(), None));
+    // Android's platform default reads from inside the APK. Game data lives in
+    // phone storage, so both sources read the filesystem directly there.
+    #[cfg(target_os = "android")]
+    {
+        use bevy::asset::io::{AssetSourceBuilder, AssetSourceId, file::FileAssetReader};
+        let mods = crate::modding::package_root();
+        app.register_asset_source("mods", AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(mods.clone()))));
+        let root = config.asset_root.clone();
+        app.register_asset_source(AssetSourceId::Default, AssetSourceBuilder::new(move || Box::new(FileAssetReader::new(root.clone()))));
+    }
     app.add_plugins(
         DefaultPlugins
             .set(AssetPlugin {
