@@ -2,14 +2,23 @@
 
 Converts the player's own Skate 3 Xbox 360 ISO into the `data` folder the
 Android app reads. Conversion runs in a private work folder (a normal Linux
-filesystem with hard links and locks), then the finished installation is
-moved to shared storage for the game.
+filesystem with file locks and exact-case names), then the finished
+installation is moved to shared storage for the game.
 
     python phone_setup.py                      # uses the .iso in Download
     python phone_setup.py --iso /sdcard/Download/Skate3.iso
 """
-from pathlib import Path
-import argparse, json, os, re, shutil, subprocess, sys, time
+import os, sys
+
+# Termux compatibility (no os.link) for this process and the map workers it
+# starts. Must run before pathlib is imported.
+COMPAT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'phone_compat')
+os.environ['PYTHONPATH'] = os.pathsep.join(filter(None, [COMPAT, os.environ.get('PYTHONPATH')]))
+sys.path.insert(0, COMPAT)
+import skate_phone_compat  # noqa: E402,F401
+
+from pathlib import Path  # noqa: E402
+import argparse, json, re, shutil, subprocess, time  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -63,6 +72,44 @@ def check_native_refpack(report):
     except OSError as error:
         library.rename(library.with_name('refpack-unusable.dll'))
         report(f'Fast decompressor unusable here ({error}); using the slower Python decoder')
+
+
+def resume_final_step(work_base, game, report):
+    """Finish a run that failed only in its last step.
+
+    Desktop setup prepares the character customiser after every map is
+    converted and cleaned up. If that step failed (for example on a Termux
+    limitation), keep the converted maps and finish just that step, then
+    publish the installation record exactly as install.py would.
+    """
+    installations = work_base / 'installations'
+    if (work_base / 'installation.json').exists() or not installations.is_dir() \
+            or not (game / 'default.xex').is_file():
+        return False
+    stages = [p for p in installations.iterdir()
+              if re.fullmatch(r'[0-9a-f]{32}', p.name) and (p / 'maps.json').is_file()
+              and (p / 'assets/private/game.json').is_file() and not (p / 'conversion').exists()]
+    if len(stages) != 1:
+        return False
+    stage = stages[0]
+    report('Resuming: maps are already converted, finishing character preparation')
+    from tools.asset_pipeline.customiser_setup import prepare
+    from tools.asset_pipeline.group_receipts import record
+    from tools.asset_pipeline.install import digest
+    from tools.asset_pipeline.optional_content import summary
+    from tools.asset_pipeline.setup_state import setup_lock
+    from tools.asset_pipeline.versions import GROUPS, fingerprints
+    with setup_lock(work_base):
+        prepare(game, stage / 'assets', report)
+        summary(stage)
+        marker = work_base / 'installation.json.new'
+        marker.write_text(json.dumps({
+            'version': 1, 'directory': 'installations/' + stage.name,
+            'source': str((game / 'default.xex').resolve()), 'source_hash': digest(game / 'default.xex'),
+            'pipelines': fingerprints(), 'outputs': {group: record(stage, group) for group in GROUPS}}),
+            encoding='utf-8')
+        marker.replace(work_base / 'installation.json')
+    return True
 
 
 def clean_incomplete(base):
@@ -170,22 +217,23 @@ def main():
     work = args.work.expanduser().resolve()
     work_base = work / 'data'
     work_base.mkdir(parents=True, exist_ok=True)
-    clean_incomplete(work_base)
-    shutil.rmtree(work / 'disc', ignore_errors=True)
-    from tools.asset_pipeline.customiser_setup import install
-    from tools.asset_pipeline.versions import installed
-    refresh = installed(work_base) is not None
-    report('Updating existing conversion' if refresh else 'Starting conversion (on a phone this can take a few hours; keep Termux open)')
-    if iso.is_file() and iso.suffix.lower() == '.iso':
-        from tools.asset_pipeline.xiso import extract
-        report('Extracting your ISO')
-        extract(iso, work / 'disc', report)
-        game = work / 'disc'
-    else:
-        game = iso if iso.is_dir() else iso.parent
-    normalize_disc(game, report)
+    from_iso = iso.is_file() and iso.suffix.lower() == '.iso'
+    game = work / 'disc' if from_iso else (iso if iso.is_dir() else iso.parent)
     try:
-        install(game / 'default.xex', work_base, Path(engine_check), report, refresh=refresh)
+        if not resume_final_step(work_base, game, report):
+            clean_incomplete(work_base)
+            from tools.asset_pipeline.customiser_setup import install
+            from tools.asset_pipeline.versions import installed
+            refresh = installed(work_base) is not None
+            report('Updating existing conversion' if refresh
+                   else 'Starting conversion (on a phone this can take a few hours; keep Termux open)')
+            if from_iso:
+                from tools.asset_pipeline.xiso import extract
+                shutil.rmtree(game, ignore_errors=True)
+                report('Extracting your ISO')
+                extract(iso, game, report)
+            normalize_disc(game, report)
+            install(game / 'default.xex', work_base, Path(engine_check), report, refresh=refresh)
     except Exception as error:
         import traceback
         log = work_base / 'setup-error.log'
