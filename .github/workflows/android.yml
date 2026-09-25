@@ -70,25 +70,43 @@ jobs:
           cp "target/$TARGET/android/libskate3rust.so" "$JNI/"
           cp "$LIBCXX_SHARED" "$JNI/"
       # A stable signing key lets new builds install over old ones (keeping
-      # the copied game data). Configure the four secrets to use your own key;
-      # otherwise the cached CI debug key is reused between runs.
+      # the copied game data). Add the four ANDROID_KEY* secrets to use your
+      # own key; otherwise a CI key is generated once and reused from cache.
       - uses: actions/cache@v4
         with:
-          path: ~/.android/debug.keystore
-          key: android-debug-keystore-v1
-      - name: Decode release keystore
+          path: ~/skate-ci-signing.jks
+          key: android-ci-signing-key-v1
+      - name: Select signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-        if: env.KEYSTORE_B64 != ''
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
-          echo "SKATE_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            {
+              echo "SKATE_KEYSTORE=$RUNNER_TEMP/release.jks"
+              echo "SKATE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "SKATE_KEY_ALIAS=$KEY_ALIAS"
+              echo "SKATE_KEY_PASSWORD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
+            exit 0
+          fi
+          # Not a secret: this key only keeps unofficial CI builds updatable.
+          KEY="$HOME/skate-ci-signing.jks"
+          if [ ! -f "$KEY" ]; then
+            keytool -genkeypair -keystore "$KEY" -storepass skate3ci -keypass skate3ci -alias skate3ci \
+              -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Skate 3 Rust Engine CI"
+          fi
+          {
+            echo "SKATE_KEYSTORE=$KEY"
+            echo "SKATE_KEYSTORE_PASSWORD=skate3ci"
+            echo "SKATE_KEY_ALIAS=skate3ci"
+            echo "SKATE_KEY_PASSWORD=skate3ci"
+          } >> "$GITHUB_ENV"
       - name: Build APK
         working-directory: android
-        env:
-          SKATE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          SKATE_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          SKATE_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle --no-daemon assembleRelease
       - name: Name APK
         run: |

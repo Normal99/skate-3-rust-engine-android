@@ -70,8 +70,11 @@ cp $NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-andr
 cd android && gradle assembleRelease
 ```
 
-`.github/workflows/android.yml` does exactly this. To sign CI builds with your
-own key (so updates install over each other), add the repository secrets
+`.github/workflows/android.yml` does exactly this. CI builds are signed with
+a key generated once and kept in the Actions cache, so updates install over
+each other. GitHub drops caches unused for 7 days, which changes the key (the
+next update then needs an uninstall). To sign with your own key instead, add
+the repository secrets
 `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`
 and `ANDROID_KEY_PASSWORD`.
 
