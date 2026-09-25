@@ -43,7 +43,7 @@ fn android_asset_root() -> Result<PathBuf, String> {
     let data = root.join("data");
     // Receipts are skipped: copies made through MTP keep sizes, but the check
     // exists to trigger the Windows setup helper, which phones do not have.
-    if let Some((assets, _)) = installed(&data)? {
+    if let Ok(Some((assets, _))) = installed(&data) {
         if assets.join("private/game.json").is_file() { return Ok(assets); }
     }
     for assets in [root.join("assets"), data.join("assets")] {
