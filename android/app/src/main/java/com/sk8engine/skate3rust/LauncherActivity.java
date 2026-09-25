@@ -1,6 +1,8 @@
 package com.sk8engine.skate3rust;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.net.Uri;
@@ -15,6 +17,7 @@ import android.widget.RadioButton;
 import android.widget.RadioGroup;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.File;
 import java.io.RandomAccessFile;
@@ -31,7 +34,14 @@ public class LauncherActivity extends Activity {
             "On-screen controls: hide when a controller is connected",
             "On-screen controls: always show", "On-screen controls: off (controller only)"};
 
+    /** Pasted into Termux after `termux-setup-storage` (see android/README.md). */
+    static final String TERMUX_COMMANDS =
+            "pkg install -y python python-numpy python-pillow && "
+            + "python -m zipfile -e /sdcard/Download/skate3rust-phone-converter.zip ~ && "
+            + "python ~/skate3rust-converter/tools/phone_setup.py";
+
     private GameSettings settings;
+    private Button copyCommands;
     private TextView status;
     private TextView log;
     private Button start;
@@ -54,6 +64,15 @@ public class LauncherActivity extends Activity {
         status = text("", 15);
         status.setPadding(0, pad / 2, 0, pad / 2);
         column.addView(status);
+
+        copyCommands = new Button(this);
+        copyCommands.setText("Copy Termux commands");
+        copyCommands.setOnClickListener(v -> {
+            ClipboardManager clipboard = getSystemService(ClipboardManager.class);
+            clipboard.setPrimaryClip(ClipData.newPlainText("Skate 3 converter", TERMUX_COMMANDS));
+            Toast.makeText(this, "Copied. Paste into Termux.", Toast.LENGTH_SHORT).show();
+        });
+        column.addView(copyCommands);
 
         storage = new Button(this);
         storage.setText("Allow access to /sdcard/Skate3Rust (keeps data across reinstalls)");
@@ -99,17 +118,21 @@ public class LauncherActivity extends Activity {
         boolean ready = GameSettings.hasGameData(root);
         storage.setVisibility(Environment.isExternalStorageManager() ? View.GONE : View.VISIBLE);
         start.setEnabled(ready);
+        copyCommands.setVisibility(ready ? View.GONE : View.VISIBLE);
         if (ready) {
             status.setText("Game data found in " + root + "\nPlug in or pair a controller for the best experience; "
                     + "touch controls are drawn otherwise. Back opens the game menu.");
         } else {
-            status.setText("Game data not found.\n\n"
-                    + "1. On Windows, run the Windows release once so setup converts your Skate 3 ISO.\n"
-                    + "2. Copy its whole \"data\" folder (next to skate3rust.exe) to this phone, either to\n"
-                    + "      " + GameSettings.SHARED_ROOT + "/data   (create the Skate3Rust folder and allow access below), or\n"
-                    + "      " + getExternalFilesDir(null) + "/data   (over USB from the PC)\n"
-                    + "3. Come back here and press Start.\n\n"
-                    + "Skate 3 assets are not included and cannot be converted on the phone.");
+            status.setText("Game data not found. Convert your own Skate 3 Xbox 360 ISO on this phone once "
+                    + "(it can take a few hours: keep Termux open and the phone charging; about 30 GB free):\n\n"
+                    + "1. Install Termux from F-Droid or its GitHub releases (not the outdated Play Store version).\n"
+                    + "2. Put your Skate 3 .iso and skate3rust-phone-converter.zip (from the same release page "
+                    + "as this app) in the Download folder.\n"
+                    + "3. Open Termux, run  termux-setup-storage  and allow access.\n"
+                    + "4. Tap \"Copy Termux commands\", paste them into Termux and press Enter.\n"
+                    + "5. When Termux prints \"Done\", come back, tap \"Allow access\" below, then Start.\n\n"
+                    + "The converted data goes to " + GameSettings.SHARED_ROOT + "/data. "
+                    + "Skate 3 assets are not included with this app.");
         }
         log.setText(tail(new File(root, "logs/latest.log"), 6000));
     }

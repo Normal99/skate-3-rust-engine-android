@@ -7,6 +7,9 @@ from tools.owned_game.big import BigArchive
 TOOLS=Path(__file__).resolve().parents[1]
 
 def map_workers():
+    # Phone setup converts one map at a time; each needs several GB of RAM.
+    if os.environ.get('SKATE_MAP_WORKERS','').isdigit():
+        return max(1,int(os.environ['SKATE_MAP_WORKERS']))
     count=min(3,max(1,(os.cpu_count() or 1)//2))
     if os.name=='nt':
         import ctypes

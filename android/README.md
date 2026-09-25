@@ -7,21 +7,43 @@ code as the Windows game, built as `libskate3rust.so` and hosted by
 
 ## Install
 
-1. Download `skate3rust-android-arm64.apk` from the **Android experimental**
-   prerelease (or the `skate3rust-android-arm64` artifact of the
-   *Android APK* workflow run) and install it. Allow "Install unknown apps"
-   for your browser or file manager when asked.
-2. **Game data is not included and cannot be converted on the phone.** Run the
-   Windows release once so its setup converts your Skate 3 ISO, then copy the
-   whole `data` folder that sits next to `skate3rust.exe` to the phone:
-   - **Recommended:** create `Skate3Rust` in the phone's internal storage, copy
-     `data` into it (`/sdcard/Skate3Rust/data`), then open the app and tap
-     *Allow access*. This folder survives reinstalling or updating the APK.
-   - Or, over USB from the PC, copy `data` into
-     `Internal storage/Android/data/com.sk8engine.skate3rust/files/`
-     (open the app once first so the folder exists). Android deletes this
-     folder if the app is uninstalled.
-3. Open **Skate 3 Rust**, choose options and press **Start**.
+1. From the **Android experimental** prerelease, download
+   `skate3rust-android-arm64.apk` and `skate3rust-phone-converter.zip`.
+   Install the APK (allow "Install unknown apps" when asked).
+2. **Game data is not included.** Convert your own Skate 3 Xbox 360 ISO once,
+   either on the phone (below) or with the Windows release.
+
+### Convert on the phone (no PC needed)
+
+The converter is the same Python pipeline the Windows setup uses, run inside
+[Termux](https://termux.dev) (install it from F-Droid or its GitHub releases;
+the Play Store build is outdated). Allow about 30 GB of free space; on a phone
+it can take a few hours, so keep Termux open and the phone charging.
+
+1. Put your `.iso` and `skate3rust-phone-converter.zip` in the phone's
+   **Download** folder.
+2. Open Termux and run `termux-setup-storage`, then allow storage access.
+3. Paste (the app's launcher has a *Copy Termux commands* button):
+
+   ```sh
+   pkg install -y python python-numpy python-pillow && python -m zipfile -e /sdcard/Download/skate3rust-phone-converter.zip ~ && python ~/skate3rust-converter/tools/phone_setup.py
+   ```
+
+   It picks up the only `.iso` in Download (or pass `--iso PATH`), converts
+   in Termux's private storage, then moves the result to
+   `/sdcard/Skate3Rust/data`. If Android stops it, run the last command again.
+4. When it prints `Done`, open **Skate 3 Rust**, tap *Allow access* (needed
+   to read `/sdcard/Skate3Rust`) and press **Start**.
+
+The phone converter skips one step of the Windows setup: loading each
+converted map in the Windows game as a final check. A map that converts but
+fails to load shows its error in the launcher log instead.
+
+### Or copy from a Windows setup
+
+Copy the `data` folder next to `skate3rust.exe` to `/sdcard/Skate3Rust/data`
+(or to `Android/data/com.sk8engine.skate3rust/files/data`, which Android
+deletes on uninstall), then *Allow access* and **Start**.
 
 ## Controls
 
@@ -84,5 +106,7 @@ and `ANDROID_KEY_PASSWORD`.
   `cdylib`; `crates/skate-game/src/android.rs` is the Android entry point.
 - Controller input comes from `SkateActivity`/`Gamepads.java` instead of
   XInput, in the same raw XInput units.
-- No ISO setup, updater or crash-report window on the phone. Steam multiplayer
-  is unavailable (its relay is a Windows helper).
+- ISO conversion runs in Termux (`tools/phone_setup.py`, with the pure-Python
+  disc reader `tools/asset_pipeline/xiso.py`) rather than inside the app.
+- No updater or crash-report window on the phone. Steam multiplayer is
+  unavailable (its relay is a Windows helper).

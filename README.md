@@ -39,8 +39,8 @@ only changed asset groups.
 ## Android
 
 An experimental arm64 APK (tuned for the Galaxy S20 family) is built by the
-*Android APK* workflow. It uses the `data` folder from a Windows copy that
-finished setup. See [android/README.md](android/README.md).
+*Android APK* workflow. Your ISO can be converted on the phone itself with
+Termux, no PC needed. See [android/README.md](android/README.md).
 
 ## Build
 

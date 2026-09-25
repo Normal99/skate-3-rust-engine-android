@@ -114,6 +114,20 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk dist/skate3rust-android-arm64.apk
           sha256sum dist/skate3rust-android-arm64.apk | tee dist/skate3rust-android-arm64.apk.sha256
           ls -lh dist
+      # Phone-only players convert their ISO inside Termux with this bundle.
+      - name: Build phone converter bundle
+        run: |
+          mkdir -p target/native-android dist/converter/skate3rust-converter
+          rustc --edition 2024 --crate-type cdylib -C opt-level=3 -C panic=abort \
+            --target "$TARGET" -C linker="$CC_aarch64_linux_android" \
+            tools/asset_pipeline/refpack_native.rs -o target/native-android/librefpack.so
+          git archive HEAD tools | tar -x -C dist/converter/skate3rust-converter
+          # fast_refpack.py loads this exact file name on every platform.
+          cp target/native-android/librefpack.so dist/converter/skate3rust-converter/tools/asset_pipeline/refpack.dll
+          (cd dist/converter && zip -qr ../skate3rust-phone-converter.zip skate3rust-converter)
+          rm -rf dist/converter
+          sha256sum dist/skate3rust-phone-converter.zip | tee dist/skate3rust-phone-converter.zip.sha256
+          ls -lh dist
       - uses: actions/upload-artifact@v4
         with:
           name: skate3rust-android-arm64
@@ -126,5 +140,6 @@ jobs:
         run: |
           gh release delete android-experimental --cleanup-tag --yes || true
           gh release create android-experimental dist/skate3rust-android-arm64.apk dist/skate3rust-android-arm64.apk.sha256 \
+            dist/skate3rust-phone-converter.zip dist/skate3rust-phone-converter.zip.sha256 \
             --prerelease --target "$GITHUB_SHA" --title "Android experimental (arm64)" \
-            --notes "Built from ${GITHUB_SHA} (${GITHUB_REF_NAME}). Install the APK, then copy the data folder from a Windows copy that finished setup. See android/README.md."
+            --notes "Built from ${GITHUB_SHA} (${GITHUB_REF_NAME}). Install the APK, then convert your own Skate 3 ISO on the phone with skate3rust-phone-converter.zip in Termux (or copy the data folder from a Windows setup). Steps: android/README.md."
