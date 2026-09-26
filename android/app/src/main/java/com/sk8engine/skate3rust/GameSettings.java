@@ -15,6 +15,8 @@ final class GameSettings {
     int renderHeight = 720;
     int refreshRate = 60;
     int touchMode = TOUCH_AUTO;
+    /** Times map textures are halved (0 = authored size); see android.rs. */
+    int textureReduction = 1;
 
     private static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences("launcher", Context.MODE_PRIVATE);
@@ -26,6 +28,7 @@ final class GameSettings {
         s.renderHeight = p.getInt("renderHeight", s.renderHeight);
         s.refreshRate = p.getInt("refreshRate", s.refreshRate);
         s.touchMode = p.getInt("touchMode", s.touchMode);
+        s.textureReduction = p.getInt("textureReduction", s.textureReduction);
         return s;
     }
 
@@ -34,6 +37,7 @@ final class GameSettings {
                 .putInt("renderHeight", renderHeight)
                 .putInt("refreshRate", refreshRate)
                 .putInt("touchMode", touchMode)
+                .putInt("textureReduction", textureReduction)
                 .apply();
     }
 

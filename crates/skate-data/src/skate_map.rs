@@ -3,6 +3,7 @@
 //! owned/world/src/owned_map_package.cpp. No geometry or physics is inferred.
 use std::{io::Read, path::Path, time::Instant};
 mod texture_decode;
+pub use texture_decode::set_texture_reduction;
 mod storage_v15;
 
 #[derive(Debug, PartialEq)]

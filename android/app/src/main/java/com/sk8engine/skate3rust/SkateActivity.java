@@ -36,6 +36,12 @@ public class SkateActivity extends GameActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         settings = GameSettings.load(this);
+        // Read by android_main, which super.onCreate starts.
+        try {
+            android.system.Os.setenv("SKATE_TEXTURE_REDUCTION", String.valueOf(settings.textureReduction), true);
+        } catch (android.system.ErrnoException ignored) {
+            // The engine then uses its phone default.
+        }
         super.onCreate(savedInstanceState);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         requestRefreshRate(settings.refreshRate);

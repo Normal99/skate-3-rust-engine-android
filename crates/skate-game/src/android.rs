@@ -52,10 +52,15 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
     let _ = std::env::set_current_dir(&root);
+    // Uncompressed RGBA map textures do not fit phone memory at authored size
+    // (University: ~2,000 textures). SkateActivity passes the launcher choice.
+    let reduction = std::env::var("SKATE_TEXTURE_REDUCTION").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    skate_data::skate_map::set_texture_reduction(reduction);
     eprintln!(
-        "REPORT_META stage=android_host root={} library_base=0x{:x} build={}",
+        "REPORT_META stage=android_host root={} library_base=0x{:x} texture_reduction={reduction} rss_mb={} build={}",
         root.display(),
         LIBRARY_BASE.load(Ordering::Relaxed),
+        resident_mb(),
         env!("SKATE_BUILD_ID")
     );
     let code = match std::panic::catch_unwind(crate::main) {
@@ -346,19 +351,26 @@ extern "C" fn on_fatal_signal(signal: c_int, info: *mut libc::siginfo_t, _contex
     }
 }
 
-/// Logs frame rate every 5 seconds so a run's performance is visible in
-/// the launcher's log view.
+/// Resident memory of this process in MB (from /proc/self/statm).
+fn resident_mb() -> u64 {
+    std::fs::read_to_string("/proc/self/statm").ok()
+        .and_then(|s| s.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map_or(0, |pages| pages * 4096 / (1024 * 1024))
+}
+
+/// Logs frame rate and memory every 5 seconds so a run's performance is
+/// visible in the launcher's log view.
 pub(crate) fn frame_report(mut state: bevy::prelude::Local<Option<(u64, u64, Instant)>>) {
     let now = Instant::now();
     let (frames, window, started) = state.get_or_insert((0, 0, now));
     *frames += 1;
     *window += 1;
     if *frames <= 3 {
-        eprintln!("REPORT_META frame={frames}");
+        eprintln!("REPORT_META frame={frames} rss_mb={}", resident_mb());
     }
     let elapsed = now.duration_since(*started);
     if elapsed >= Duration::from_secs(5) {
-        eprintln!("REPORT_META fps={:.1} frames={frames}", *window as f64 / elapsed.as_secs_f64());
+        eprintln!("REPORT_META fps={:.1} frames={frames} rss_mb={}", *window as f64 / elapsed.as_secs_f64(), resident_mb());
         *window = 0;
         *started = now;
     }

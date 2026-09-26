@@ -31,6 +31,10 @@ public class LauncherActivity extends Activity {
     private static final int[] HEIGHTS = {720, 900, 1080, 0};
     private static final String[] HEIGHT_LABELS = {
             "720p  (recommended for 60 FPS)", "900p", "1080p", "Native panel resolution (slowest)"};
+    private static final int[] REDUCTIONS = {1, 2, 0};
+    private static final String[] REDUCTION_LABELS = {
+            "Half resolution  (recommended, 1/4 of the memory)", "Quarter resolution  (lowest memory)",
+            "Full resolution  (may run out of memory)"};
     private static final int[] RATES = {60, 120};
     private static final String[] RATE_LABELS = {"60 Hz  (recommended)", "120 Hz  (needs a very light scene)"};
     private static final String[] TOUCH_LABELS = {
@@ -87,6 +91,9 @@ public class LauncherActivity extends Activity {
         column.addView(heading("Render resolution"));
         column.addView(choices(HEIGHT_LABELS, indexOf(HEIGHTS, settings.renderHeight),
                 i -> settings.renderHeight = HEIGHTS[i]));
+        column.addView(heading("Texture detail"));
+        column.addView(choices(REDUCTION_LABELS, indexOf(REDUCTIONS, settings.textureReduction),
+                i -> settings.textureReduction = REDUCTIONS[i]));
         column.addView(heading("Display refresh rate"));
         column.addView(choices(RATE_LABELS, indexOf(RATES, settings.refreshRate),
                 i -> settings.refreshRate = RATES[i]));
