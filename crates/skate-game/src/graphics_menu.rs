@@ -225,6 +225,11 @@ fn setup(
             order: -1,
             ..default()
         });
+        // Most world surfaces sample the player shadow map per pixel. One
+        // hardware 2x2 tap instead of the default Gaussian kernel on phones.
+        if cfg!(target_os = "android") {
+            commands.entity(camera).insert(bevy::light::ShadowFilteringMethod::Hardware2x2);
+        }
     }
     let output = commands
         .spawn((Camera2d, Msaa::Off, IsDefaultUiCamera))

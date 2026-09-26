@@ -386,6 +386,8 @@ fn frame_report(
     mut state: bevy::prelude::Local<FrameWindow>,
     start: bevy::prelude::Res<FrameStart>,
     diagnostics: bevy::prelude::Res<bevy::diagnostic::DiagnosticsStore>,
+    windows: bevy::prelude::Query<&bevy::window::Window>,
+    menu: Option<bevy::prelude::Res<crate::graphics_menu::Menu>>,
 ) {
     let now = Instant::now();
     let started = *state.started.get_or_insert(now);
@@ -394,6 +396,12 @@ fn frame_report(
     state.main_seconds += now.duration_since(start.0).as_secs_f64();
     if state.frames <= 3 {
         eprintln!("REPORT_META frame={} rss_mb={}", state.frames, resident_mb());
+    }
+    if state.frames == 3 || state.window == 1 {
+        // Confirms the launcher's fixed surface size and the menu render scale.
+        let sizes: Vec<String> = windows.iter().map(|w| format!("{}x{}", w.physical_width(), w.physical_height())).collect();
+        eprintln!("REPORT_META window={} graphics={}", sizes.join(","),
+            menu.as_ref().map_or_else(String::new, |m| m.diagnostic_settings()));
     }
     let elapsed = now.duration_since(started);
     if elapsed < Duration::from_secs(5) {
