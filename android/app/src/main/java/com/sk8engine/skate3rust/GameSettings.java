@@ -17,6 +17,8 @@ final class GameSettings {
     int touchMode = TOUCH_AUTO;
     /** Times map textures are halved (0 = authored size); see android.rs. */
     int textureReduction = 1;
+    /** Metres of world drawn around the camera (0 = everything); see skate_world.rs. */
+    int drawDistance = 150;
 
     private static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences("launcher", Context.MODE_PRIVATE);
@@ -29,6 +31,7 @@ final class GameSettings {
         s.refreshRate = p.getInt("refreshRate", s.refreshRate);
         s.touchMode = p.getInt("touchMode", s.touchMode);
         s.textureReduction = p.getInt("textureReduction", s.textureReduction);
+        s.drawDistance = p.getInt("drawDistance", s.drawDistance);
         return s;
     }
 
@@ -38,6 +41,7 @@ final class GameSettings {
                 .putInt("refreshRate", refreshRate)
                 .putInt("touchMode", touchMode)
                 .putInt("textureReduction", textureReduction)
+                .putInt("drawDistance", drawDistance)
                 .apply();
     }
 

@@ -35,6 +35,9 @@ public class LauncherActivity extends Activity {
     private static final String[] REDUCTION_LABELS = {
             "Half resolution  (recommended, 1/4 of the memory)", "Quarter resolution  (lowest memory)",
             "Full resolution  (may run out of memory)"};
+    private static final int[] DISTANCES = {100, 150, 250, 0};
+    private static final String[] DISTANCE_LABELS = {
+            "100 m  (fastest)", "150 m  (recommended)", "250 m", "Unlimited  (slowest, like PC)"};
     private static final int[] RATES = {60, 120};
     private static final String[] RATE_LABELS = {"60 Hz  (recommended)", "120 Hz  (needs a very light scene)"};
     private static final String[] TOUCH_LABELS = {
@@ -94,6 +97,9 @@ public class LauncherActivity extends Activity {
         column.addView(heading("Texture detail"));
         column.addView(choices(REDUCTION_LABELS, indexOf(REDUCTIONS, settings.textureReduction),
                 i -> settings.textureReduction = REDUCTIONS[i]));
+        column.addView(heading("Draw distance"));
+        column.addView(choices(DISTANCE_LABELS, indexOf(DISTANCES, settings.drawDistance),
+                i -> settings.drawDistance = DISTANCES[i]));
         column.addView(heading("Display refresh rate"));
         column.addView(choices(RATE_LABELS, indexOf(RATES, settings.refreshRate),
                 i -> settings.refreshRate = RATES[i]));

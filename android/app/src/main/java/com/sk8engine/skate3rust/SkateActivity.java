@@ -39,6 +39,7 @@ public class SkateActivity extends GameActivity {
         // Read by android_main, which super.onCreate starts.
         try {
             android.system.Os.setenv("SKATE_TEXTURE_REDUCTION", String.valueOf(settings.textureReduction), true);
+            android.system.Os.setenv("SKATE_DRAW_DISTANCE", String.valueOf(settings.drawDistance), true);
         } catch (android.system.ErrnoException ignored) {
             // The engine then uses its phone default.
         }

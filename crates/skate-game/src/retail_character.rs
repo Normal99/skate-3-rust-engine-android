@@ -190,6 +190,16 @@ fn load(mut commands: Commands, config: Res<crate::config::Config>, sources: Que
         display_sh: None,
     });
 }
+/// Phones render world shadow casters into one near cascade instead of four:
+/// each cascade resubmits thousands of world batches every frame.
+pub(crate) fn phone_or(desktop: bevy::light::CascadeShadowConfigBuilder) -> bevy::light::CascadeShadowConfigBuilder {
+    if cfg!(target_os = "android") {
+        bevy::light::CascadeShadowConfigBuilder { num_cascades: 1, maximum_distance: 40., first_cascade_far_bound: 40., ..desktop }
+    } else {
+        desktop
+    }
+}
+
 fn spawn_shadow_sources(commands: &mut Commands, light: Vec3) {
     // World + skater casters, sampled only by the character shader.
     commands.spawn((
@@ -202,11 +212,11 @@ fn spawn_shadow_sources(commands: &mut Commands, light: Vec3) {
             ..default()
         },
         Transform::default().looking_to(-light, Vec3::Y),
-        bevy::light::CascadeShadowConfigBuilder {
+        phone_or(bevy::light::CascadeShadowConfigBuilder {
             maximum_distance: 100.,
             first_cascade_far_bound: 10.,
             ..default()
-        }
+        })
         .build(),
     ));
     // Only skinned player pieces inhabit layer 28. The world receiver samples

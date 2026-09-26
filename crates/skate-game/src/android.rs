@@ -56,8 +56,10 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     // (University: ~2,000 textures). SkateActivity passes the launcher choice.
     let reduction = std::env::var("SKATE_TEXTURE_REDUCTION").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     skate_data::skate_map::set_texture_reduction(reduction);
+    let draw_distance = std::env::var("SKATE_DRAW_DISTANCE").ok().and_then(|v| v.parse().ok()).unwrap_or(150);
+    crate::skate_world::DRAW_DISTANCE.store(draw_distance, Ordering::Relaxed);
     eprintln!(
-        "REPORT_META stage=android_host root={} library_base=0x{:x} texture_reduction={reduction} rss_mb={} build={}",
+        "REPORT_META stage=android_host root={} library_base=0x{:x} texture_reduction={reduction} draw_distance={draw_distance} rss_mb={} build={}",
         root.display(),
         LIBRARY_BASE.load(Ordering::Relaxed),
         resident_mb(),
@@ -358,22 +360,67 @@ fn resident_mb() -> u64 {
         .map_or(0, |pages| pages * 4096 / (1024 * 1024))
 }
 
-/// Logs frame rate and memory every 5 seconds so a run's performance is
-/// visible in the launcher's log view.
-pub(crate) fn frame_report(mut state: bevy::prelude::Local<Option<(u64, u64, Instant)>>) {
+/// Start of the main-world frame, for splitting game logic from rendering.
+#[derive(bevy::prelude::Resource)]
+pub(crate) struct FrameStart(Instant);
+
+pub(crate) fn install_diagnostics(app: &mut bevy::prelude::App) {
+    // Per-pass CPU and (with timestamp queries) GPU times, summarised below.
+    app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin)
+        .insert_resource(FrameStart(Instant::now()))
+        .add_systems(bevy::prelude::First, |mut start: bevy::prelude::ResMut<FrameStart>| start.0 = Instant::now())
+        .add_systems(bevy::prelude::Last, frame_report);
+}
+
+#[derive(Default)]
+pub(crate) struct FrameWindow {
+    frames: u64,
+    window: u64,
+    main_seconds: f64,
+    started: Option<Instant>,
+}
+
+/// Logs frame rate, memory, main-world (game logic) time and the slowest
+/// render passes every 5 seconds, visible in the launcher's log view.
+fn frame_report(
+    mut state: bevy::prelude::Local<FrameWindow>,
+    start: bevy::prelude::Res<FrameStart>,
+    diagnostics: bevy::prelude::Res<bevy::diagnostic::DiagnosticsStore>,
+) {
     let now = Instant::now();
-    let (frames, window, started) = state.get_or_insert((0, 0, now));
-    *frames += 1;
-    *window += 1;
-    if *frames <= 3 {
-        eprintln!("REPORT_META frame={frames} rss_mb={}", resident_mb());
+    let started = *state.started.get_or_insert(now);
+    state.frames += 1;
+    state.window += 1;
+    state.main_seconds += now.duration_since(start.0).as_secs_f64();
+    if state.frames <= 3 {
+        eprintln!("REPORT_META frame={} rss_mb={}", state.frames, resident_mb());
     }
-    let elapsed = now.duration_since(*started);
-    if elapsed >= Duration::from_secs(5) {
-        eprintln!("REPORT_META fps={:.1} frames={frames} rss_mb={}", *window as f64 / elapsed.as_secs_f64(), resident_mb());
-        *window = 0;
-        *started = now;
+    let elapsed = now.duration_since(started);
+    if elapsed < Duration::from_secs(5) {
+        return;
     }
+    let mut passes: Vec<(f64, String)> = diagnostics
+        .iter()
+        .filter_map(|d| {
+            let path = d.path().as_str();
+            let kind = if path.ends_with("/elapsed_gpu") { "gpu" } else if path.ends_with("/elapsed_cpu") { "cpu" } else { return None };
+            let name = path.strip_prefix("render/")?.rsplit_once('/')?.0;
+            Some((d.average()?, format!("{name}:{kind}")))
+        })
+        .collect();
+    passes.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let top: Vec<String> = passes.iter().take(8).map(|(ms, name)| format!("{name}={ms:.1}ms")).collect();
+    eprintln!(
+        "REPORT_META fps={:.1} frames={} rss_mb={} main_ms={:.1} passes=[{}]",
+        state.window as f64 / elapsed.as_secs_f64(),
+        state.frames,
+        resident_mb(),
+        state.main_seconds * 1000. / state.window as f64,
+        top.join(" ")
+    );
+    state.window = 0;
+    state.main_seconds = 0.;
+    state.started = Some(now);
 }
 
 #[derive(Clone, Copy)]

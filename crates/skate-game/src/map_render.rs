@@ -260,7 +260,7 @@ fn custom_lighting(map: &skate_data::skate_map::SkateMap, commands: &mut SceneCo
         DayEnvironment { values: map.environment.to_vec(), sky: None, sun_direction: orbit(map.environment[11], map.environment[10]) },
         DirectionalLight { color, illuminance, shadows_enabled: true, affects_lightmapped_mesh_diffuse: false, ..default() },
         transform,
-        bevy::light::CascadeShadowConfigBuilder { maximum_distance: 100., first_cascade_far_bound: 10., ..default() }.build(),
+        crate::retail_character::phone_or(bevy::light::CascadeShadowConfigBuilder { maximum_distance: 100., first_cascade_far_bound: 10., ..default() }).build(),
     ));
 }
 pub(crate) fn advance_day(

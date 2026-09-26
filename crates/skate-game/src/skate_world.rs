@@ -553,6 +553,28 @@ mod performance_inventory {
     }
 }
 
+/// Draw distance in metres for world batches (0 = unlimited, the desktop
+/// default). Phones set it: University submits ~4,900 batches otherwise.
+pub(crate) static DRAW_DISTANCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// Hide a batch once its bounding-box centre is farther than the draw
+/// distance plus the batch radius, so wide batches never vanish while in reach.
+fn draw_range(positions: impl Iterator<Item = [f32; 3]>) -> Option<bevy::camera::visibility::VisibilityRange> {
+    let distance = DRAW_DISTANCE.load(std::sync::atomic::Ordering::Relaxed) as f32;
+    if distance <= 0. {
+        return None;
+    }
+    let (mut min, mut max) = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    for position in positions {
+        let position = Vec3::from_array(position);
+        (min, max) = (min.min(position), max.max(position));
+    }
+    (min.x <= max.x).then(|| bevy::camera::visibility::VisibilityRange {
+        use_aabb: true,
+        ..bevy::camera::visibility::VisibilityRange::abrupt(0., distance + (max - min).length() * 0.5)
+    })
+}
+
 pub(crate) fn spawn(
     map: &SkateMap,
     commands: &mut crate::map_render::SceneCommands,
@@ -688,6 +710,7 @@ pub(crate) fn spawn(
             vertices.iter().map(|v| { let uv = v.decal_uv.unwrap_or(v.uv); [uv[0], uv[1], 0., 1.] }).collect::<Vec<_>>(),
         )
         .with_inserted_indices(bevy::mesh::Indices::U32(local));
+        let range = draw_range(vertices.iter().map(|v| v.position));
         if vertices.iter().all(|v| v.tangent_frame.is_some()) {
             let tangents: Vec<[f32; 4]> = vertices
                 .iter()
@@ -709,7 +732,10 @@ pub(crate) fn spawn(
         }
         if let Some(material) = retail {
             let material = retail_materials.add(material);
-            commands.spawn((Name::new(m.name.clone()), Mesh3d(meshes.add(mesh)), MeshMaterial3d(material), Transform::default()));
+            let mut entity = commands.spawn((Name::new(m.name.clone()), Mesh3d(meshes.add(mesh)), MeshMaterial3d(material), Transform::default()));
+            if let Some(range) = range {
+                entity.insert(range);
+            }
             continue;
         }
         // Vertex colours above carry retail decal coordinates, never PBR tint.
@@ -747,6 +773,9 @@ pub(crate) fn spawn(
             MeshMaterial3d(material),
             Transform::default(),
         ));
+        if let Some(range) = range {
+            entity.insert(range);
+        }
         if let Some(image) = texture(m.textures[1], 1) {
             entity.insert(bevy::pbr::Lightmap {
                 image,
