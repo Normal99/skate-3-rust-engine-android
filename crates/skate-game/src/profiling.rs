@@ -35,6 +35,61 @@ static NEXT_THREAD: AtomicU64 = AtomicU64::new(1);
 thread_local! {
     static THREAD: u64 = NEXT_THREAD.fetch_add(1, Ordering::Relaxed);
     static ENTERED: RefCell<Vec<(u64, Instant)>> = const { RefCell::new(Vec::new()) };
+    static TIMED: RefCell<Vec<(u64, Instant)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Accumulated wall time and run count per ECS system/schedule label since
+/// the last `take_system_times`. Filled only by `SystemTimes` (phones).
+static SYSTEM_TIMES: std::sync::Mutex<Option<HashMap<String, (Duration, u32)>>> = std::sync::Mutex::new(None);
+
+/// Always-on per-system totals for the Android log summary; the desktop keeps
+/// spans disabled unless a trace is requested.
+struct SystemTimes;
+impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for SystemTimes {
+    fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let label = match attrs.metadata().name() {
+            "schedule" => {
+                let mut name = ScheduleName::default();
+                attrs.record(&mut name);
+                (!name.0.is_empty()).then(|| format!("schedule:{}", name.0))
+            }
+            _ => {
+                let mut name = SystemName::default();
+                attrs.record(&mut name);
+                (!name.0.is_empty()).then_some(name.0)
+            }
+        };
+        if let (Some(label), Some(span)) = (label, ctx.span(id)) {
+            span.extensions_mut().insert(TimedLabel(label));
+        }
+    }
+    fn on_enter(&self, id: &Id, _: Context<'_, S>) {
+        TIMED.with(|stack| stack.borrow_mut().push((id.into_u64(), Instant::now())));
+    }
+    fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
+        let Some(start) = TIMED.with(|stack| {
+            let mut stack = stack.borrow_mut();
+            let index = stack.iter().rposition(|(key, _)| *key == id.into_u64())?;
+            Some(stack.remove(index).1)
+        }) else {
+            return;
+        };
+        let Some(span) = ctx.span(id) else { return };
+        let extensions = span.extensions();
+        let Some(TimedLabel(label)) = extensions.get::<TimedLabel>() else { return };
+        if let Ok(mut times) = SYSTEM_TIMES.lock() {
+            let entry = times.get_or_insert_with(HashMap::new).entry(label.clone()).or_default();
+            entry.0 += start.elapsed();
+            entry.1 += 1;
+        }
+    }
+}
+struct TimedLabel(String);
+
+/// Drain the per-label totals: (label, total time, runs).
+pub(crate) fn take_system_times() -> Vec<(String, Duration, u32)> {
+    SYSTEM_TIMES.lock().ok().and_then(|mut t| t.take()).unwrap_or_default()
+        .into_iter().map(|(label, (total, runs))| (label, total, runs)).collect()
 }
 #[derive(Debug, Default)]
 struct Options {
@@ -256,7 +311,12 @@ fn init_options(options: Options) -> Result<Option<Guard>, String> {
         .with_writer(std::io::stderr)
         .with_filter(subscriber::filter::FilterFn::new(|m| m.is_event()))
         .with_filter(filter);
-    tracing::subscriber::set_global_default(subscriber::registry().with(layer).with(logs))
+    let systems = cfg!(target_os = "android").then(|| {
+        SystemTimes.with_filter(subscriber::filter::FilterFn::new(|m| {
+            m.is_span() && m.target().starts_with("bevy_ecs") && matches!(m.name(), "system" | "schedule")
+        }))
+    });
+    tracing::subscriber::set_global_default(subscriber::registry().with(layer).with(logs).with(systems))
         .map_err(|_| "Cannot install profiling/log subscriber")?;
     let _ = tracing_log::LogTracer::init();
     Ok(guard)

@@ -409,14 +409,23 @@ fn frame_report(
         })
         .collect();
     passes.sort_by(|a, b| b.0.total_cmp(&a.0));
-    let top: Vec<String> = passes.iter().take(8).map(|(ms, name)| format!("{name}={ms:.1}ms")).collect();
+    let top: Vec<String> = passes.iter().take(6).map(|(ms, name)| format!("{name}={ms:.1}ms")).collect();
+    // Main-world CPU per system/schedule, averaged per frame, slowest first.
+    let mut systems = crate::profiling::take_system_times();
+    systems.sort_by(|a, b| b.1.cmp(&a.1));
+    let frames = state.window.max(1) as f64;
+    let systems: Vec<String> = systems.iter().take(14).map(|(label, total, runs)| {
+        let short = label.rsplit("::").next().unwrap_or(label);
+        format!("{short}={:.1}ms/{:.1}x", total.as_secs_f64() * 1000. / frames, *runs as f64 / frames)
+    }).collect();
     eprintln!(
-        "REPORT_META fps={:.1} frames={} rss_mb={} main_ms={:.1} passes=[{}]",
+        "REPORT_META fps={:.1} frames={} rss_mb={} main_ms={:.1} passes=[{}] systems=[{}]",
         state.window as f64 / elapsed.as_secs_f64(),
         state.frames,
         resident_mb(),
         state.main_seconds * 1000. / state.window as f64,
-        top.join(" ")
+        top.join(" "),
+        systems.join(" ")
     );
     state.window = 0;
     state.main_seconds = 0.;
