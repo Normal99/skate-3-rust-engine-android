@@ -134,6 +134,8 @@ pub(crate) fn build(
     app.add_plugins(crate::multiplayer::MultiplayerPlugin);
     app.add_plugins(crate::scoring_hud::ScoringHudPlugin);
     app.add_systems(Last, crate::crash_context::sample);
+    #[cfg(target_os = "android")]
+    app.add_systems(Last, crate::android::frame_report);
     crate::profiling::install(&mut app);
     app
 }

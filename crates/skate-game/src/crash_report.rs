@@ -159,6 +159,8 @@ pub(crate) fn entry() -> Option<i32> {
     // runs in-process and panics still reach logcat and logs/latest.log.
     if cfg!(target_os = "android") {
         install_panic_hook();
+        #[cfg(target_os = "android")]
+        crate::android::chain_panic_hook();
         return None;
     }
     if std::env::var_os(CHILD).is_some() {

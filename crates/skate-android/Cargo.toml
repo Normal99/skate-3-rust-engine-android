@@ -29,3 +29,5 @@ skate-vehicles = { path = "../skate-vehicles" }
 skate-net = { path = "../skate-net" }
 blake3 = "=1.8.7"
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg"] }
+# Android host only (crates/skate-game/src/android.rs): pipes, signals, dladdr.
+libc = "0.2"

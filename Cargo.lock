@@ -4725,6 +4725,7 @@ dependencies = [
  "blake3",
  "half",
  "image",
+ "libc",
  "serde",
  "serde_json",
  "skate-core",

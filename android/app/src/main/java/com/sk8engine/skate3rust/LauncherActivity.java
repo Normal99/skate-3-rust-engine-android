@@ -1,6 +1,8 @@
 package com.sk8engine.skate3rust;
 
 import android.app.Activity;
+import android.app.ActivityManager;
+import android.app.ApplicationExitInfo;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Intent;
@@ -22,6 +24,7 @@ import android.widget.Toast;
 import java.io.File;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /** Checks for copied game data and picks phone performance options. */
 public class LauncherActivity extends Activity {
@@ -100,6 +103,14 @@ public class LauncherActivity extends Activity {
         column.addView(start);
 
         column.addView(heading("Last session log"));
+        Button copyLog = new Button(this);
+        copyLog.setText("Copy log");
+        copyLog.setOnClickListener(v -> {
+            getSystemService(ClipboardManager.class)
+                    .setPrimaryClip(ClipData.newPlainText("Skate 3 log", log.getText()));
+            Toast.makeText(this, "Log copied", Toast.LENGTH_SHORT).show();
+        });
+        column.addView(copyLog);
         log = text("", 11);
         log.setTypeface(Typeface.MONOSPACE);
         log.setTextIsSelectable(true);
@@ -134,7 +145,39 @@ public class LauncherActivity extends Activity {
                     + "The converted data goes to " + GameSettings.SHARED_ROOT + "/data. "
                     + "Skate 3 assets are not included with this app.");
         }
-        log.setText(tail(new File(root, "logs/latest.log"), 6000));
+        log.setText(lastExit() + "\n" + tail(new File(root, "logs/latest.log"), 16000));
+    }
+
+    /** Why Android ended the previous run: crash, native crash, low memory... */
+    private String lastExit() {
+        ActivityManager manager = getSystemService(ActivityManager.class);
+        ActivityManager.MemoryInfo memory = new ActivityManager.MemoryInfo();
+        manager.getMemoryInfo(memory);
+        String device = String.format("Device memory: %d MB total, %d MB available now",
+                memory.totalMem >> 20, memory.availMem >> 20);
+        List<ApplicationExitInfo> exits = manager.getHistoricalProcessExitReasons(getPackageName(), 0, 1);
+        if (exits.isEmpty()) return device + "\nLast run: no exit record\n";
+        ApplicationExitInfo exit = exits.get(0);
+        long minutes = (System.currentTimeMillis() - exit.getTimestamp()) / 60000;
+        return device + String.format("\nLast run ended %d min ago: %s, status %d, memory at exit %d MB (PSS %d MB)%s\n",
+                minutes, reasonName(exit.getReason()), exit.getStatus(), exit.getRss() >> 10, exit.getPss() >> 10,
+                exit.getDescription() == null ? "" : ", " + exit.getDescription());
+    }
+
+    private static String reasonName(int reason) {
+        switch (reason) {
+            case ApplicationExitInfo.REASON_EXIT_SELF: return "game exited";
+            case ApplicationExitInfo.REASON_SIGNALED: return "killed by signal";
+            case ApplicationExitInfo.REASON_LOW_MEMORY: return "killed for LOW MEMORY";
+            case ApplicationExitInfo.REASON_CRASH: return "Java crash";
+            case ApplicationExitInfo.REASON_CRASH_NATIVE: return "NATIVE CRASH";
+            case ApplicationExitInfo.REASON_ANR: return "not responding (ANR)";
+            case ApplicationExitInfo.REASON_INITIALIZATION_FAILURE: return "failed to start";
+            case ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE: return "killed for excessive resource use";
+            case ApplicationExitInfo.REASON_USER_REQUESTED: return "closed by user";
+            case ApplicationExitInfo.REASON_USER_STOPPED: return "force-stopped by user";
+            default: return "reason " + reason;
+        }
     }
 
     private TextView text(String value, int sp) {
