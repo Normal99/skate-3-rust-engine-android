@@ -100,6 +100,10 @@ pub(crate) struct Menu {
     multiplayer: bool,
     browser: bool,
     daylight: bool,
+    /// Row under a press that has not been released yet (rows act on release).
+    pressed_row: Option<usize>,
+    /// The current touch moved far enough to scroll, so releasing it is not a tap.
+    touch_dragged: bool,
 }
 impl Menu {
     pub(crate) fn ambient_brightness(&self, automatic: f32) -> f32 {
@@ -134,6 +138,9 @@ pub(crate) struct MenuRow(usize);
 struct MenuLabel(usize);
 #[derive(Component)]
 struct StatusLabel;
+/// Scrolling container of the menu rows; the title and status stay fixed.
+#[derive(Component)]
+struct MenuList;
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct MenuInput;
@@ -147,11 +154,76 @@ impl Plugin for GraphicsMenuPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(FramePacer(Instant::now()))
             .add_systems(PostStartup, setup.in_set(PresentationSetup))
-            .add_systems(PreUpdate, interact.in_set(MenuInput).after(bevy::input::InputSystems))
+            .add_systems(PreUpdate, (scroll, interact).chain().in_set(MenuInput).after(bevy::input::InputSystems))
             .add_systems(Update, (crate::map_render::advance_day, apply, labels).chain())
             .add_systems(PostUpdate, crate::map_render::position_celestial_bodies.before(bevy::transform::TransformSystems::Propagate))
             .add_systems(Last, pace);
+        if cfg!(target_os = "android") {
+            app.add_systems(PreUpdate, fit_ui_scale);
+        }
     }
+}
+
+/// Android reports the panel's pixel density (about 2.6 on a Galaxy S20) as the
+/// UI scale, but SkateActivity renders into a smaller fixed-size surface, so
+/// menus came out far too large. Size the UI from the surface height instead:
+/// about 600 logical lines, like a small desktop window.
+fn fit_ui_scale(window: Single<&Window, With<PrimaryWindow>>, mut scale: ResMut<UiScale>) {
+    let height = window.physical_height() as f32;
+    if height <= 0. || window.scale_factor() <= 0. {
+        return;
+    }
+    let wanted = height / 600. / window.scale_factor();
+    if (scale.0 - wanted).abs() > 0.01 {
+        scale.0 = wanted;
+    }
+}
+
+/// Touch-drag and mouse-wheel scrolling of the menu rows, and keeping the row
+/// selected with a controller or keys inside the visible part of the list.
+fn scroll(
+    mut menu: ResMut<Menu>,
+    touches: Res<Touches>,
+    ui_scale: Res<UiScale>,
+    mut wheel: MessageReader<bevy::input::mouse::MouseWheel>,
+    mut list: Single<(&ComputedNode, &UiGlobalTransform, &mut ScrollPosition), With<MenuList>>,
+    rows: Query<(&MenuRow, &ComputedNode, &UiGlobalTransform)>,
+    mut revealed: Local<Option<(usize, bool, bool, bool)>>,
+) {
+    let wheel: f32 = wheel.read().map(|e| e.y * if e.unit == bevy::input::mouse::MouseScrollUnit::Line { 36. } else { 1. }).sum();
+    if !menu.open {
+        *revealed = None;
+        return;
+    }
+    let (view, transform, scroll) = &mut *list;
+    if touches.any_just_pressed() {
+        menu.touch_dragged = false;
+    }
+    let mut delta = -wheel;
+    for touch in touches.iter() {
+        // A small dead zone keeps taps from becoming scrolls.
+        if touch.distance().length() > 12. {
+            menu.touch_dragged = true;
+        }
+        if menu.touch_dragged {
+            // Touch positions are window units; scrolling is in UI units.
+            delta -= touch.delta().y / ui_scale.0.max(0.01);
+        }
+    }
+    scroll.0.y += delta;
+    let key = (menu.selected, menu.daylight, menu.multiplayer, menu.browser);
+    if *revealed != Some(key) && view.size().y > 0. {
+        if let Some((_, row, row_transform)) = rows.iter().find(|(r, n, _)| r.0 == menu.selected && n.size().y > 0.) {
+            let center = transform.inverse().transform_point2(row_transform.translation);
+            let top = center.y - row.size().y / 2. + view.size().y / 2.;
+            let bottom = top + row.size().y;
+            let shift = if top < 0. { top } else { (bottom - view.size().y).max(0.) };
+            scroll.0.y += shift * view.inverse_scale_factor;
+            *revealed = Some(key);
+        }
+    }
+    let maximum = ((view.content_size().y - view.size().y) * view.inverse_scale_factor).max(0.);
+    scroll.0.y = scroll.0.y.clamp(0., maximum);
 }
 fn setup(
     mut commands: Commands,
@@ -248,18 +320,31 @@ fn setup(
         display: Display::None, width:percent(100), height:percent(100), align_items:AlignItems::Center,
         justify_content:JustifyContent::Center, position_type:PositionType::Absolute, ..default()
     }, BackgroundColor(Color::srgba(0.015,0.025,0.04,0.88)))).with_children(|root| {
-        root.spawn((Node { width:px(560),max_width:percent(95),padding:UiRect::all(px(18)),flex_direction:FlexDirection::Column,row_gap:px(4),border_radius:BorderRadius::all(px(12)),..default() },
+        // The panel never exceeds the screen; on short screens the rows scroll.
+        let phone = cfg!(target_os = "android");
+        let (row_height, row_font) = if phone { (34., 18.) } else { (26., 18.) };
+        let help = if phone {
+            "Tap a row to change it | Drag to scroll | Up/Down select | Left/Right change\nBack or Menu resumes | Changes save automatically"
+        } else {
+            "Click to cycle | Up/Down select | Left/Right change\nEsc resume | Changes save automatically"
+        };
+        root.spawn((Node { width:px(560),max_width:percent(95),max_height:percent(94),padding:UiRect::all(px(if phone { 12. } else { 18. })),flex_direction:FlexDirection::Column,row_gap:px(4),border_radius:BorderRadius::all(px(12)),..default() },
             BackgroundColor(Color::srgb(0.035,0.055,0.08)))).with_children(|panel| {
-            panel.spawn((Text::new("GAME MENU"),TextFont {font_size:32.,..default()},TextColor(Color::WHITE)));
+            panel.spawn((Text::new("GAME MENU"),TextFont {font_size:if phone { 24. } else { 32. },..default()},TextColor(Color::WHITE)));
             panel.spawn((Text::new("GAMEPLAY & GRAPHICS"),TextFont {font_size:16.,..default()},TextColor(Color::srgb(0.4,0.85,0.85))));
-            for i in 0..17 {
-                panel.spawn((Button, MenuRow(i), Node {width:percent(100),min_height:px(26),padding:UiRect::all(px(3)),align_items:AlignItems::Center,border_radius:BorderRadius::all(px(5)),..default()},
-                    BackgroundColor(Color::srgb(0.08,0.11,0.15)))).with_children(|row| {
-                    row.spawn((MenuLabel(i),Text::new(""),TextFont {font_size:18.,..default()},TextColor(Color::WHITE)));
-                });
-            }
+            panel.spawn((MenuList, ScrollPosition::default(), Node {
+                width:percent(100),flex_direction:FlexDirection::Column,row_gap:px(4),
+                overflow:Overflow::scroll_y(),flex_shrink:1.,min_height:px(0),..default()
+            })).with_children(|list| {
+                for i in 0..17 {
+                    list.spawn((Button, MenuRow(i), Node {width:percent(100),min_height:px(row_height),flex_shrink:0.,padding:UiRect::all(px(3)),align_items:AlignItems::Center,border_radius:BorderRadius::all(px(5)),..default()},
+                        BackgroundColor(Color::srgb(0.08,0.11,0.15)))).with_children(|row| {
+                        row.spawn((MenuLabel(i),Text::new(""),TextFont {font_size:row_font,..default()},TextColor(Color::WHITE)));
+                    });
+                }
+            });
             panel.spawn((StatusLabel,Text::new(""),TextFont {font_size:15.,..default()},TextColor(Color::srgb(0.65,0.75,0.8))));
-            panel.spawn((Text::new("Click to cycle | Up/Down select | Left/Right change\nEsc resume | Changes save automatically"),TextFont {font_size:14.,..default()},TextColor(Color::srgb(0.65,0.75,0.8))));
+            panel.spawn((Text::new(help),TextFont {font_size:14.,..default()},TextColor(Color::srgb(0.65,0.75,0.8))));
         });
     });
     commands.insert_resource(SceneTarget(target));
@@ -279,6 +364,8 @@ fn setup(
         multiplayer: false,
         browser: false,
         daylight: false,
+        pressed_row: None,
+        touch_dragged: false,
     });
 }
 fn msaa(samples: u32) -> Msaa {
@@ -359,9 +446,16 @@ pub(crate) fn interact(
         }
         for (interaction, row) in &buttons {
             if panel.dragging() { continue; }
+            // Rows act on release, so a press that turns into a scroll drag
+            // on a touch screen does not change a setting.
             if *interaction == Interaction::Pressed {
-                menu.selected = row.0;
-                action = Some((row.0, 1));
+                menu.pressed_row = Some(row.0);
+            } else if menu.pressed_row == Some(row.0) {
+                menu.pressed_row = None;
+                if !menu.touch_dragged {
+                    menu.selected = row.0;
+                    action = Some((row.0, 1));
+                }
             }
         }
     }
@@ -744,7 +838,7 @@ mod tests {
             .insert_resource(Menu {
                 open: false, selected: 0, settings: GraphicsSettings::default(),
                 difficulty: Difficulty::Easy, path: PathBuf::new(), supported_msaa: vec![1, 2, 4, 8], status: String::new(),
-                multiplayer: false, browser: false, daylight: false,
+                multiplayer: false, browser: false, daylight: false, pressed_row: None, touch_dragged: false,
                 maps: vec![crate::map_library::Entry { label: "Test world".into(), path: None }], selected_map: 0,
             })
             .add_systems(Update, apply);
