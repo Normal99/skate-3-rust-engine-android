@@ -56,9 +56,9 @@ View and Menu. The phone's Back gesture opens the game menu.
 
 Phone defaults trade some visual detail for frame rate:
 
-- **Render resolution 720p** surface, upscaled by the display hardware, and
-  **67 % internal resolution** for new installs (in-game menu, *Internal
-  resolution*). The Mali GPU is fill-rate bound, so lowering it helps most.
+- **Render resolution 720p** surface, upscaled by the display hardware, at
+  100 % internal resolution. On an S20+ the frame rate was the same at 25 %,
+  so the remaining limit is not GPU fill rate.
 - **Texture detail: half** (1/4 of the texture memory) and a **150 m draw
   distance** for level batches.
 - **No dynamic shadows from the level** (the skater keeps its own shadow), one
