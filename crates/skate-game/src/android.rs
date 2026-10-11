@@ -513,6 +513,7 @@ fn frame_report(
     diagnostics: bevy::prelude::Res<bevy::diagnostic::DiagnosticsStore>,
     windows: bevy::prelude::Query<&bevy::window::Window>,
     menu: Option<bevy::prelude::Res<crate::graphics_menu::Menu>>,
+    device: Option<bevy::prelude::Res<bevy::render::renderer::RenderDevice>>,
 ) {
     let now = Instant::now();
     let started = *state.started.get_or_insert(now);
@@ -537,6 +538,15 @@ fn frame_report(
     state.main_seconds += now.duration_since(start.0).as_secs_f64();
     if state.frames <= 3 {
         eprintln!("REPORT_META frame={} rss_mb={}", state.frames, resident_mb());
+    }
+    if state.frames == 3 {
+        // The merged level (skate_world_merge.rs) relies on these.
+        if let Some(device) = &device {
+            let limits = device.limits();
+            eprintln!("REPORT_META gpu_limits storage_buffers_per_stage={} texture_array_layers={} storage_binding_mb={}",
+                limits.max_storage_buffers_per_shader_stage, limits.max_texture_array_layers,
+                limits.max_storage_buffer_binding_size >> 20);
+        }
     }
     if state.frames == 3 || state.window == 1 {
         // Confirms the launcher's fixed surface size and the menu render scale.

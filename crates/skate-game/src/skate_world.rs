@@ -439,6 +439,8 @@ struct RenderGroup {
     material: usize,
     indices: Vec<u32>,
     retail: Option<crate::retail_render::RetailWorldMaterial>,
+    /// 0: explicit tangent frames, 1: generated from the normal map, 2: none.
+    tangent_mode: u8,
 }
 
 fn consolidated_groups(
@@ -467,7 +469,7 @@ fn consolidated_groups(
                 continue;
             }
         }
-        groups.push(RenderGroup { material, indices, retail });
+        groups.push(RenderGroup { material, indices, retail, tangent_mode });
     }
     groups
 }
@@ -575,6 +577,245 @@ fn draw_range(positions: impl Iterator<Item = [f32; 3]>) -> Option<bevy::camera:
     })
 }
 
+/// Phones merge compatible retail batches into few objects (see
+/// retail_merged.rs). The launcher can turn it off (SKATE_MERGE_LEVEL=0).
+pub(crate) fn merge_level() -> bool {
+    cfg!(target_os = "android") && std::env::var_os("SKATE_MERGE_LEVEL").is_none_or(|v| v != "0")
+}
+
+#[path = "skate_world_merge.rs"]
+mod merge;
+
+fn texture_image(map: &SkateMap, source: &skate_data::skate_map::Texture, role: u8) -> Image {
+    let (format, bytes) = if role == 1 {
+        let mut bytes = Vec::with_capacity(source.rgba.len() * 2);
+        for pixel in source.rgba.chunks_exact(4) {
+            for (i, &byte) in pixel.iter().enumerate() {
+                let v = f32::from(byte) / 255.;
+                let linear = if i == 3 { 1. } else { v * v * 4. };
+                bytes.extend_from_slice(&half::f16::from_f32(linear).to_le_bytes());
+            }
+        }
+        (TextureFormat::Rgba16Float, bytes)
+    } else {
+        let srgb =
+            role == 0 && source.color_space == 1 && !(2..=3).contains(&map.version);
+        (
+            if srgb {
+                TextureFormat::Rgba8UnormSrgb
+            } else {
+                TextureFormat::Rgba8Unorm
+            },
+            source.rgba.clone(),
+        )
+    };
+    let cube = role == 5;
+    let height = if cube { source.height / 6 } else { source.height };
+    let layers = if cube { 6 } else { 1 };
+    let mut image = Image::new(
+        Extent3d {
+            width: source.width,
+            height,
+            depth_or_array_layers: layers,
+        },
+        TextureDimension::D2,
+        bytes,
+        format,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    // Phones also mip clamped retail textures (role 4: lightmaps
+    // and clamped surfaces) and PBR colour/normal maps (0, 2):
+    // sampling full-size textures for distant surfaces thrashes
+    // the Mali texture cache. Role 1 is half-float, not RGBA8.
+    let phone_mips = cfg!(target_os = "android") && matches!(role, 0 | 2 | 4);
+    if role == 3 || role == 6 || cube || phone_mips {
+        let (bytes, levels) = crate::retail_render::mip_chain(&source.rgba, source.width, height, layers);
+        image.data = Some(bytes);
+        image.texture_descriptor.mip_level_count = levels;
+    }
+    if cube {
+        image.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
+            dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube), ..default()
+        });
+    }
+    let mut sampler = bevy::image::ImageSamplerDescriptor::linear();
+    if role != 1 && role != 4 && role != 6 && !cube {
+        sampler.address_mode_u = bevy::image::ImageAddressMode::Repeat;
+        sampler.address_mode_v = bevy::image::ImageAddressMode::Repeat;
+    }
+    image.sampler = ImageSampler::Descriptor(sampler);
+    image
+}
+
+/// Marks textures held back (not yet assets) while the level is merged.
+const STAGED_TEXTURE: u128 = 0x5ca7_e000_0000_0000_0000_0000_0000_0000;
+
+fn staged_index(handle: &Handle<Image>) -> Option<usize> {
+    match handle {
+        Handle::Uuid(id, _) if id.as_u128() >> 96 == STAGED_TEXTURE >> 96 => Some((id.as_u128() & u128::from(u32::MAX)) as usize),
+        _ => None,
+    }
+}
+
+/// Decodes each texture/role once. When merging, textures are held back
+/// so those that end up only inside texture arrays never become assets.
+struct TextureBank<'a, S> {
+    map: &'a SkateMap,
+    ids: &'a [u32],
+    images: &'a mut S,
+    cache: HashMap<(u32, u8), Handle<Image>>,
+    staged: Option<Vec<(Option<Image>, merge::TextureClass, usize)>>,
+    resolved: HashMap<usize, Handle<Image>>,
+}
+impl<S: crate::map_render::AssetSink<Image>> TextureBank<'_, S> {
+    fn get(&mut self, id: u32, role: u8) -> Option<Handle<Image>> {
+        let id = self.ids[id as usize];
+        if id == 0 {
+            return None;
+        }
+        let source = &self.map.textures[id as usize - 1];
+        if role == 5 && source.height != source.width * 6 {
+            // Older .skate exports contain only face zero. Never treat it as a cube.
+            return None;
+        }
+        if let Some(handle) = self.cache.get(&(id, role)) {
+            return Some(handle.clone());
+        }
+        let image = texture_image(self.map, source, role);
+        let handle = match &mut self.staged {
+            Some(staged) => {
+                let size = image.texture_descriptor.size;
+                let class = merge::TextureClass {
+                    role,
+                    width: size.width,
+                    height: size.height,
+                    format: image.texture_descriptor.format,
+                    mips: image.texture_descriptor.mip_level_count,
+                };
+                let bytes = image.data.as_ref().map_or(0, Vec::len);
+                // Cubes are never array layers.
+                let class = if role == 5 { merge::TextureClass { role: u8::MAX, ..class } } else { class };
+                staged.push((Some(image), class, bytes));
+                Handle::Uuid(bevy::asset::uuid::Uuid::from_u128(STAGED_TEXTURE | (staged.len() - 1) as u128), default())
+            }
+            None => self.images.add(image),
+        };
+        self.cache.insert((id, role), handle.clone());
+        Some(handle)
+    }
+    /// Array candidates: staged, non-cube textures.
+    fn class(&self, handle: &Handle<Image>) -> Option<(usize, merge::TextureClass, usize)> {
+        let index = staged_index(handle)?;
+        let (_, class, bytes) = self.staged.as_ref()?[index];
+        (class.role != u8::MAX).then_some((index, class, bytes))
+    }
+    /// The asset for a handle from get(), adding a held-back texture now.
+    fn resolve(&mut self, handle: Handle<Image>) -> Handle<Image> {
+        let Some(index) = staged_index(&handle) else { return handle };
+        if let Some(handle) = self.resolved.get(&index) {
+            return handle.clone();
+        }
+        let image = self.staged.as_mut().unwrap()[index].0.take().expect("texture still held");
+        let handle = self.images.add(image);
+        self.resolved.insert(index, handle.clone());
+        handle
+    }
+    fn texture(&mut self, id: u32, role: u8) -> Option<Handle<Image>> {
+        self.get(id, role).map(|handle| self.resolve(handle))
+    }
+    /// One array texture from same-class staged textures, in layer order.
+    fn array(&self, layers: &[usize]) -> Image {
+        let staged = self.staged.as_ref().unwrap();
+        let first = staged[layers[0]].0.as_ref().expect("texture still held");
+        let size = first.texture_descriptor.size;
+        let mut image = Image::new_uninit(
+            Extent3d { depth_or_array_layers: layers.len() as u32, ..size },
+            TextureDimension::D2,
+            first.texture_descriptor.format,
+            RenderAssetUsages::RENDER_WORLD,
+        );
+        image.texture_descriptor.mip_level_count = first.texture_descriptor.mip_level_count;
+        image.sampler = first.sampler.clone();
+        // Explicit: a one-layer array would otherwise get a plain 2D view.
+        image.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
+            dimension: Some(bevy::render::render_resource::TextureViewDimension::D2Array), ..default()
+        });
+        let layer = first.data.as_ref().map_or(0, Vec::len);
+        let mut data = Vec::with_capacity(layer * layers.len());
+        // Layer-major: every mip of layer 0, then layer 1, matching Bevy's default order.
+        for &index in layers {
+            data.extend_from_slice(staged[index].0.as_ref().and_then(|i| i.data.as_ref()).expect("texture still held"));
+        }
+        image.data = Some(data);
+        image
+    }
+    fn release(&mut self, index: usize) {
+        if !self.resolved.contains_key(&index) {
+            self.staged.as_mut().unwrap()[index].0 = None;
+        }
+    }
+}
+
+/// A mesh from (vertex index, slot) corners, preserving authored normals and
+/// both UV sets. Vertex colour carries retail decal coordinates and the merged
+/// material slot. Returns whether explicit tangent frames were written.
+fn batch_mesh(map: &SkateMap, corners: impl Iterator<Item = (u32, u32)>) -> (Mesh, bool, Option<bevy::camera::visibility::VisibilityRange>) {
+    let mut remap = HashMap::new();
+    let mut vertices = Vec::new();
+    let local: Vec<u32> = corners
+        .map(|(index, slot)| {
+            *remap.entry((index, slot)).or_insert_with(|| {
+                let id = vertices.len() as u32;
+                vertices.push((&map.geometry.vertices[index as usize], slot as f32));
+                id
+            })
+        })
+        .collect();
+    let mut mesh = Mesh::new(
+        bevy::mesh::PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        vertices.iter().map(|(v, _)| v.position).collect::<Vec<_>>(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        vertices.iter().map(|(v, _)| v.normal).collect::<Vec<_>>(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        vertices.iter().map(|(v, _)| v.uv).collect::<Vec<_>>(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_UV_1,
+        vertices.iter().map(|(v, _)| v.lightmap_uv).collect::<Vec<_>>(),
+    )
+    .with_inserted_attribute(
+        Mesh::ATTRIBUTE_COLOR,
+        vertices.iter().map(|(v, slot)| { let uv = v.decal_uv.unwrap_or(v.uv); [uv[0], uv[1], *slot, 1.] }).collect::<Vec<_>>(),
+    )
+    .with_inserted_indices(bevy::mesh::Indices::U32(local));
+    let range = draw_range(vertices.iter().map(|(v, _)| v.position));
+    let explicit = vertices.iter().all(|(v, _)| v.tangent_frame.is_some());
+    if explicit {
+        let tangents: Vec<[f32; 4]> = vertices
+            .iter()
+            .map(|(v, _)| {
+                let frame = v
+                    .tangent_frame
+                    .unwrap()
+                    .map(|b| (b as i8 as f32 / 127.).max(-1.));
+                let binormal = Vec3::new(frame[0], frame[1], frame[2]);
+                let tangent = binormal.cross(Vec3::from_array(v.normal)) * frame[3];
+                [tangent.x, tangent.y, tangent.z, frame[3]]
+            })
+            .collect();
+        mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
+    }
+    (mesh, explicit, range)
+}
+
 pub(crate) fn spawn(
     map: &SkateMap,
     commands: &mut crate::map_render::SceneCommands,
@@ -583,6 +824,7 @@ pub(crate) fn spawn(
     retail_materials: &mut impl crate::map_render::AssetSink<crate::retail_render::RetailWorldMaterial>,
     images: &mut impl crate::map_render::AssetSink<Image>,
     tuning: &crate::retail_render::MaterialTuning,
+    merged: Option<&mut crate::map_render::MergedAssets>,
 ) {
     // Texture roles have different transfer functions even when sharing a record.
     let _span = info_span!("prepare_map_geometry_and_textures").entered();
@@ -590,150 +832,94 @@ pub(crate) fn spawn(
     // Without level shadows (phone default) the batches are not casters at all,
     // so Bevy's per-light shadow visibility tests skip thousands of entities.
     let casts_shadows = crate::retail_character::world_shadows();
-    let mut cache = HashMap::<(u32, u8), Handle<Image>>::new();
-    let mut texture = |id: u32, role: u8| -> Option<Handle<Image>> {
-        let id = texture_ids[id as usize];
-        if id == 0 {
-            return None;
-        }
-        if role == 5 && map.textures[id as usize - 1].height != map.textures[id as usize - 1].width * 6 {
-            // Older .skate exports contain only face zero. Never treat it as a cube.
-            return None;
-        }
-        Some(
-            cache
-                .entry((id, role))
-                .or_insert_with(|| {
-                    let source = &map.textures[id as usize - 1];
-                    let (format, bytes) = if role == 1 {
-                        let mut bytes = Vec::with_capacity(source.rgba.len() * 2);
-                        for pixel in source.rgba.chunks_exact(4) {
-                            for (i, &byte) in pixel.iter().enumerate() {
-                                let v = f32::from(byte) / 255.;
-                                let linear = if i == 3 { 1. } else { v * v * 4. };
-                                bytes.extend_from_slice(&half::f16::from_f32(linear).to_le_bytes());
-                            }
-                        }
-                        (TextureFormat::Rgba16Float, bytes)
-                    } else {
-                        let srgb =
-                            role == 0 && source.color_space == 1 && !(2..=3).contains(&map.version);
-                        (
-                            if srgb {
-                                TextureFormat::Rgba8UnormSrgb
-                            } else {
-                                TextureFormat::Rgba8Unorm
-                            },
-                            source.rgba.clone(),
-                        )
-                    };
-                    let cube = role == 5;
-                    let height = if cube { source.height / 6 } else { source.height };
-                    let layers = if cube { 6 } else { 1 };
-                    let mut image = Image::new(
-                        Extent3d {
-                            width: source.width,
-                            height,
-                            depth_or_array_layers: layers,
-                        },
-                        TextureDimension::D2,
-                        bytes,
-                        format,
-                        RenderAssetUsages::RENDER_WORLD,
-                    );
-                    // Phones also mip clamped retail textures (role 4: lightmaps
-                    // and clamped surfaces) and PBR colour/normal maps (0, 2):
-                    // sampling full-size textures for distant surfaces thrashes
-                    // the Mali texture cache. Role 1 is half-float, not RGBA8.
-                    let phone_mips = cfg!(target_os = "android") && matches!(role, 0 | 2 | 4);
-                    if role == 3 || role == 6 || cube || phone_mips {
-                        let (bytes, levels) = crate::retail_render::mip_chain(&source.rgba, source.width, height, layers);
-                        image.data = Some(bytes);
-                        image.texture_descriptor.mip_level_count = levels;
-                    }
-                    if cube {
-                        image.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
-                            dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube), ..default()
-                        });
-                    }
-                    let mut sampler = bevy::image::ImageSamplerDescriptor::linear();
-                    if role != 1 && role != 4 && role != 6 && !cube {
-                        sampler.address_mode_u = bevy::image::ImageAddressMode::Repeat;
-                        sampler.address_mode_v = bevy::image::ImageAddressMode::Repeat;
-                    }
-                    image.sampler = ImageSampler::Descriptor(sampler);
-                    images.add(image)
-                })
-                .clone(),
-        )
+    let mut bank = TextureBank {
+        map, ids: &texture_ids, images, cache: HashMap::new(),
+        staged: merged.is_some().then(Vec::new), resolved: HashMap::new(),
     };
     // Lightmaps belong to mesh entities, not StandardMaterial. Distinct baked
     // lighting still needs separate geometry batches but can share a PBR material.
     let pbr_ids = self::material_ids(&map.materials, &texture_ids, false);
-    let groups = consolidated_groups(map, &texture_ids, tuning, &mut texture);
+    let groups = consolidated_groups(map, &texture_ids, tuning, &mut |id, role| bank.get(id, role));
     eprintln!(
         "SKATE_RENDER_BATCHES count={} triangles={}",
         groups.len(),
         map.geometry.indices.len() / 3
     );
+    let mut groups = groups;
+    if let Some(merged) = merged {
+        let plan = merge::plan(groups, |handle| bank.class(handle));
+        // Textures still needed on their own by batches that stay separate.
+        let keep: std::collections::HashSet<usize> = plan.rest.iter()
+            .filter_map(|g| g.retail.as_ref())
+            .flat_map(|m| [&m.diffuse, &m.lightmap, &m.normal, &m.detail, &m.macro_map, &m.decal, &m.specular, &m.environment])
+            .filter_map(|h| h.as_ref().and_then(staged_index))
+            .collect();
+        let mut array_bytes = 0;
+        let arrays: Vec<Handle<Image>> = plan.arrays.iter().map(|layers| {
+            let image = bank.array(layers);
+            array_bytes += image.data.as_ref().map_or(0, Vec::len);
+            // Free each source as soon as its copy is in an array.
+            for &index in layers {
+                if !keep.contains(&index) {
+                    bank.release(index);
+                }
+            }
+            bank.images.add(image)
+        }).collect();
+        let mut objects = 0;
+        let merged_batches: usize = plan.sets.iter().map(|s| s.members().len()).sum();
+        for set in &plan.sets {
+            let slots: Vec<crate::retail_render::MergedSlot> = set.members().iter().map(|m| m.slot.clone()).collect();
+            let buffer = merged.buffers.reserve();
+            merged.slots.push((buffer.clone(), slots));
+            let array = |k: usize| set.arrays[k].map(|a| arrays[a].clone());
+            let material = crate::map_render::AssetSink::add(&mut merged.materials, crate::retail_render::MergedWorldMaterial {
+                slots: buffer,
+                diffuse: array(0),
+                lightmap: array(1),
+                normal: array(2),
+                detail: array(3),
+                macro_map: array(4),
+                decal: array(5),
+                specular: array(6),
+                environment: set.environment.clone().map(|h| bank.resolve(h)),
+                shadow_state: set.shadow_state.clone(),
+                alpha: set.alpha,
+                two_sided: set.two_sided,
+            });
+            for cell in merge::cells(map, set) {
+                let (mesh, _, range) = batch_mesh(map, cell.into_iter());
+                let mut entity = commands.spawn((Name::new("Merged level"), Mesh3d(meshes.add(mesh)), MeshMaterial3d(material.clone()), Transform::default()));
+                if let Some(range) = range {
+                    entity.insert(range);
+                }
+                if !casts_shadows {
+                    entity.insert(bevy::light::NotShadowCaster);
+                }
+                objects += 1;
+            }
+        }
+        eprintln!(
+            "SKATE_MERGED_LEVEL batches={merged_batches} sets={} objects={objects} arrays={} array_mb={} separate={}",
+            plan.sets.len(), plan.arrays.len(), array_bytes >> 20, plan.rest.len()
+        );
+        groups = plan.rest;
+        for group in &mut groups {
+            if let Some(material) = group.retail.as_mut() {
+                for slot in material.images_mut() {
+                    if let Some(handle) = slot.take() {
+                        *slot = Some(bank.resolve(handle));
+                    }
+                }
+            }
+        }
+    }
     let mut material_handles: Vec<Option<Handle<StandardMaterial>>> =
         vec![None; map.materials.len()];
-    for RenderGroup { material: material_index, indices, retail } in groups {
+    for RenderGroup { material: material_index, indices, retail, .. } in groups {
         let m = &map.materials[material_index];
-        // Reindex each batch, preserving authored normals and both UV sets.
-        let mut remap = HashMap::new();
-        let mut vertices = Vec::new();
-        let local: Vec<u32> = indices
-            .into_iter()
-            .map(|index| {
-                *remap.entry(index).or_insert_with(|| {
-                    let id = vertices.len() as u32;
-                    vertices.push(&map.geometry.vertices[index as usize]);
-                    id
-                })
-            })
-            .collect();
-        let mut mesh = Mesh::new(
-            bevy::mesh::PrimitiveTopology::TriangleList,
-            RenderAssetUsages::RENDER_WORLD,
-        )
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_POSITION,
-            vertices.iter().map(|v| v.position).collect::<Vec<_>>(),
-        )
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_NORMAL,
-            vertices.iter().map(|v| v.normal).collect::<Vec<_>>(),
-        )
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_UV_0,
-            vertices.iter().map(|v| v.uv).collect::<Vec<_>>(),
-        )
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_UV_1,
-            vertices.iter().map(|v| v.lightmap_uv).collect::<Vec<_>>(),
-        )
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_COLOR,
-            vertices.iter().map(|v| { let uv = v.decal_uv.unwrap_or(v.uv); [uv[0], uv[1], 0., 1.] }).collect::<Vec<_>>(),
-        )
-        .with_inserted_indices(bevy::mesh::Indices::U32(local));
-        let range = draw_range(vertices.iter().map(|v| v.position));
-        if vertices.iter().all(|v| v.tangent_frame.is_some()) {
-            let tangents: Vec<[f32; 4]> = vertices
-                .iter()
-                .map(|v| {
-                    let frame = v
-                        .tangent_frame
-                        .unwrap()
-                        .map(|b| (b as i8 as f32 / 127.).max(-1.));
-                    let binormal = Vec3::new(frame[0], frame[1], frame[2]);
-                    let tangent = binormal.cross(Vec3::from_array(v.normal)) * frame[3];
-                    [tangent.x, tangent.y, tangent.z, frame[3]]
-                })
-                .collect();
-            mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, tangents);
-        } else if m.textures[2] != 0 {
+        let (mut mesh, explicit, range) = batch_mesh(map, indices.into_iter().map(|i| (i, 0)));
+        if !explicit && m.textures[2] != 0 {
             if let Err(error) = mesh.generate_tangents() {
                 warn!("SKATE material {} tangent generation: {error}", m.name);
             }
@@ -751,13 +937,14 @@ pub(crate) fn spawn(
         }
         // Vertex colours above carry retail decal coordinates, never PBR tint.
         mesh.remove_attribute(Mesh::ATTRIBUTE_COLOR);
-        let material = material_handles[pbr_ids[material_index]]
-            .get_or_insert_with(|| {
-                let orm = texture(m.textures[3], 2);
-                materials.add(StandardMaterial {
+        let material = match &material_handles[pbr_ids[material_index]] {
+            Some(handle) => handle.clone(),
+            None => {
+                let orm = bank.texture(m.textures[3], 2);
+                let handle = materials.add(StandardMaterial {
                     base_color: Color::linear_rgb(m.color[0], m.color[1], m.color[2]),
-                    base_color_texture: texture(m.textures[0], 0),
-                    normal_map_texture: texture(m.textures[2], 2),
+                    base_color_texture: bank.texture(m.textures[0], 0),
+                    normal_map_texture: bank.texture(m.textures[2], 2),
                     metallic_roughness_texture: orm.clone(),
                     occlusion_texture: orm,
                     metallic: if m.textures[3] != 0 { 1. } else { 0. },
@@ -767,7 +954,7 @@ pub(crate) fn spawn(
                         m.color[1] * m.emissive,
                         m.color[2] * m.emissive,
                     ),
-                    emissive_texture: texture(m.textures[4], 0),
+                    emissive_texture: bank.texture(m.textures[4], 0),
                     alpha_mode: match m.alpha_mode {
                         1 => AlphaMode::Mask(m.alpha_cutoff),
                         2 => AlphaMode::Blend,
@@ -775,9 +962,11 @@ pub(crate) fn spawn(
                     },
                     lightmap_exposure: m.indirect_strength,
                     ..default()
-                })
-            })
-            .clone();
+                });
+                material_handles[pbr_ids[material_index]] = Some(handle.clone());
+                handle
+            }
+        };
         let mut entity = commands.spawn((
             Name::new(m.name.clone()),
             Mesh3d(meshes.add(mesh)),
@@ -790,7 +979,7 @@ pub(crate) fn spawn(
         if !casts_shadows {
             entity.insert(bevy::light::NotShadowCaster);
         }
-        if let Some(image) = texture(m.textures[1], 1) {
+        if let Some(image) = bank.texture(m.textures[1], 1) {
             entity.insert(bevy::pbr::Lightmap {
                 image,
                 uv_rect: Rect::new(0., 0., 1., 1.),
@@ -974,6 +1163,67 @@ mod tests {
         assert_eq!(world.resource::<Assets<Mesh>>().len(), 0);
         assert_eq!(world.resource::<Assets<StandardMaterial>>().len(), 0);
         assert_eq!(world.resource::<Assets<crate::retail_render::RetailWorldMaterial>>().len(), 0);
+    }
+    #[test]
+    fn merged_level_keeps_every_triangle_and_retires_with_the_map() {
+        use crate::retail_render::MergedWorldMaterial;
+        use bevy::render::storage::ShaderStorageBuffer;
+        let mut map = retail_demo();
+        // A shading parameter makes the two retail materials distinct batches.
+        let definition = map.materials[1].retail_definition.as_mut().unwrap();
+        let name = b"unused_source_property";
+        let at = definition.windows(name.len()).position(|w| w == name).unwrap();
+        definition.splice(at - 4..at + name.len(), [&19u32.to_le_bytes()[..], b"macroOverlayOpacity"].concat());
+        let value = definition.len() - 9;
+        definition.splice(value..value + 5, [&3u32.to_le_bytes()[..], b"0.5"].concat());
+        let mut world = World::new();
+        world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Assets<StandardMaterial>>();
+        world.init_resource::<Assets<crate::retail_render::RetailWorldMaterial>>();
+        world.init_resource::<Assets<crate::retail_render::RetailSkyMaterial>>();
+        world.init_resource::<Assets<MergedWorldMaterial>>();
+        world.init_resource::<Assets<ShaderStorageBuffer>>();
+        world.init_resource::<Assets<Image>>();
+        let mut scene = crate::map_render::PreparedScene::new(&world);
+        scene.force_merge(&world);
+        scene.prepare(Some(&map), std::path::Path::new("unused"));
+        scene.publish(&mut world);
+        let objects: Vec<(Handle<Mesh>, Handle<MergedWorldMaterial>)> = world
+            .query::<(&Mesh3d, &MeshMaterial3d<MergedWorldMaterial>)>().iter(&world)
+            .map(|(mesh, material)| (mesh.0.clone(), material.0.clone())).collect();
+        assert_eq!(objects.len(), 1);
+        let mut triangles = 0;
+        for (mesh, material) in &objects {
+            let mesh = world.resource::<Assets<Mesh>>().get(mesh).unwrap();
+            let material = world.resource::<Assets<MergedWorldMaterial>>().get(material).unwrap();
+            let slots = world.resource::<Assets<ShaderStorageBuffer>>().get(&material.slots).unwrap();
+            let slot_count = slots.data.as_ref().unwrap().len() / <crate::retail_render::MergedSlot as bevy::render::render_resource::ShaderType>::min_size().get() as usize;
+            let Some(bevy::mesh::VertexAttributeValues::Float32x4(colors)) = mesh.attribute(Mesh::ATTRIBUTE_COLOR) else { panic!() };
+            assert_eq!(slot_count, 2);
+            assert!(colors.iter().all(|c| (c[2] as usize) < slot_count && c[2].fract() == 0.));
+            assert!(colors.iter().any(|c| c[2] == 1.));
+            triangles += mesh.indices().unwrap().len() / 3;
+            let images = world.resource::<Assets<Image>>();
+            for array in [&material.diffuse, &material.lightmap].into_iter().flatten() {
+                let image = images.get(array).unwrap();
+                assert_eq!(image.texture_view_descriptor.as_ref().unwrap().dimension,
+                    Some(bevy::render::render_resource::TextureViewDimension::D2Array));
+                let size = image.texture_descriptor.size;
+                let mut layer = 0;
+                for level in 0..image.texture_descriptor.mip_level_count {
+                    layer += ((size.width >> level).max(1) * (size.height >> level).max(1) * 4) as usize;
+                }
+                assert_eq!(image.data.as_ref().unwrap().len(), layer * size.depth_or_array_layers as usize);
+            }
+        }
+        let separate: usize = world.query::<(&Mesh3d, &MeshMaterial3d<crate::retail_render::RetailWorldMaterial>)>().iter(&world)
+            .map(|(mesh, _)| world.resource::<Assets<Mesh>>().get(&mesh.0).unwrap().indices().unwrap().len() / 3).sum();
+        assert_eq!(triangles + separate, map.geometry.indices.len() / 3);
+        crate::map_render::MapAssets::retire(&mut world);
+        assert_eq!(world.resource::<Assets<MergedWorldMaterial>>().len(), 0);
+        assert_eq!(world.resource::<Assets<ShaderStorageBuffer>>().len(), 0);
+        assert_eq!(world.resource::<Assets<Image>>().len(), 0);
+        assert_eq!(world.resource::<Assets<Mesh>>().len(), 0);
     }
     #[test]
     fn render_batches_preserve_complete_triangles_and_materials() {

@@ -47,5 +47,5 @@ fn spawn_package(
         return;
     }
     info!("SKATE_BACKDROP: {name} {folder} triangles={}", map.geometry.indices.len() / 3);
-    crate::skate_world::spawn(&map, commands, meshes, materials, retail_materials, images, &super::MaterialTuning::load(asset_root));
+    crate::skate_world::spawn(&map, commands, meshes, materials, retail_materials, images, &super::MaterialTuning::load(asset_root), None);
 }

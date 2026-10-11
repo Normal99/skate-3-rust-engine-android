@@ -38,6 +38,9 @@ public class LauncherActivity extends Activity {
     private static final int[] DISTANCES = {100, 150, 250, 0};
     private static final String[] DISTANCE_LABELS = {
             "100 m  (fastest)", "150 m  (recommended)", "250 m", "Unlimited  (slowest, like PC)"};
+    private static final String[] MERGE_LABELS = {
+            "Merged  (recommended, far fewer objects for the CPU)",
+            "Separate  (one object per material, like PC)"};
     private static final String[] SHADOW_LABELS = {
             "Off  (recommended, faster; the skater keeps its own shadow)",
             "On  (buildings shade the skater; custom maps' sun shadows; slower)"};
@@ -114,6 +117,8 @@ public class LauncherActivity extends Activity {
                 i -> settings.drawDistance = DISTANCES[i]));
         column.addView(heading("Shadows cast by the level"));
         column.addView(choices(SHADOW_LABELS, settings.worldShadows ? 1 : 0, i -> settings.worldShadows = i == 1));
+        column.addView(heading("Level objects"));
+        column.addView(choices(MERGE_LABELS, settings.mergeLevel ? 0 : 1, i -> settings.mergeLevel = i == 0));
         column.addView(heading("Performance log"));
         column.addView(choices(TIMING_LABELS, settings.detailedTiming ? 1 : 0, i -> settings.detailedTiming = i == 1));
         column.addView(heading("CPU"));

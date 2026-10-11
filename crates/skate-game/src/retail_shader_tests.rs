@@ -182,6 +182,15 @@ fn material_shaders_validate() {
 }
 
 #[test]
+fn merged_level_shaders_validate() {
+    validate(false, false, &["MERGED_LEVEL"]);
+    validate(false, false, &["MERGED_LEVEL", "RETAIL_ALPHA_TEST"]);
+    validate(false, true, &["MERGED_LEVEL", "RETAIL_ALPHA_TEST", "PREPASS_FRAGMENT", "NORMAL_PREPASS",
+        "NORMAL_PREPASS_OR_DEFERRED_PREPASS", "MOTION_VECTOR_PREPASS"]);
+    validate(false, true, &["MERGED_LEVEL"]);
+}
+
+#[test]
 #[ignore = "Explicit headless GPU compiler probe; no game or window"]
 fn vulkan_material_pipeline_probe() {
     gpu_probe(false);

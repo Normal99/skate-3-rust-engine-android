@@ -23,6 +23,8 @@ final class GameSettings {
     boolean fastCores = false;
     /** The level casts dynamic shadows (buildings onto the skater, custom maps' sun). */
     boolean worldShadows = false;
+    /** Draw the level as a few merged objects (skate_world_merge.rs). */
+    boolean mergeLevel = true;
     /** Per-system and per-pass timing in the log (costs a little frame time). */
     boolean detailedTiming = false;
     /** Present frames as soon as they are ready (capped at the display rate). */
@@ -42,6 +44,7 @@ final class GameSettings {
         s.drawDistance = p.getInt("drawDistance", s.drawDistance);
         s.fastCores = p.getBoolean("fastCoresOptIn", s.fastCores);
         s.worldShadows = p.getBoolean("worldShadows", s.worldShadows);
+        s.mergeLevel = p.getBoolean("mergeLevel", s.mergeLevel);
         s.detailedTiming = p.getBoolean("detailedTiming", s.detailedTiming);
         s.uncapped = p.getBoolean("uncapped", s.uncapped);
         return s;
@@ -56,6 +59,7 @@ final class GameSettings {
                 .putInt("drawDistance", drawDistance)
                 .putBoolean("fastCoresOptIn", fastCores)
                 .putBoolean("worldShadows", worldShadows)
+                .putBoolean("mergeLevel", mergeLevel)
                 .putBoolean("detailedTiming", detailedTiming)
                 .putBoolean("uncapped", uncapped)
                 .apply();

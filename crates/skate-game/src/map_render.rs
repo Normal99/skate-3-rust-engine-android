@@ -35,6 +35,15 @@ impl<A: Asset> StagedAssets<A> {
         }).collect()
     }
 }
+impl<A: Asset> StagedAssets<A> {
+    /// A handle whose asset is supplied later with fill().
+    pub fn reserve(&mut self) -> Handle<A> {
+        self.provider.reserve_handle().typed::<A>()
+    }
+    pub fn fill(&mut self, handle: Handle<A>, asset: A) {
+        self.values.push((handle, asset));
+    }
+}
 impl<A: Asset> AssetSink<A> for StagedAssets<A> {
     fn add(&mut self, asset: A) -> Handle<A> {
         let handle = self.provider.reserve_handle().typed::<A>();
@@ -72,6 +81,25 @@ impl SceneEntity<'_> {
     }
 }
 
+/// Phone merged level (skate_world::merge_level). Slot parameters stay
+/// editable until publish so the sky can still set fog and sun direction.
+pub(crate) struct MergedAssets {
+    pub materials: StagedAssets<crate::retail_render::MergedWorldMaterial>,
+    pub buffers: StagedAssets<bevy::render::storage::ShaderStorageBuffer>,
+    pub slots: Vec<(Handle<bevy::render::storage::ShaderStorageBuffer>, Vec<crate::retail_render::MergedSlot>)>,
+}
+impl MergedAssets {
+    fn new(world: &World) -> Self {
+        Self { materials: StagedAssets::new(world), buffers: StagedAssets::new(world), slots: Vec::new() }
+    }
+    fn publish(mut self, world: &mut World) -> (Vec<AssetId<crate::retail_render::MergedWorldMaterial>>, Vec<AssetId<bevy::render::storage::ShaderStorageBuffer>>) {
+        for (handle, slots) in std::mem::take(&mut self.slots) {
+            self.buffers.fill(handle, bevy::render::storage::ShaderStorageBuffer::from(slots));
+        }
+        (self.materials.publish(world), self.buffers.publish(world))
+    }
+}
+
 pub(crate) struct PreparedScene {
     commands: SceneCommands,
     meshes: StagedAssets<Mesh>,
@@ -79,12 +107,19 @@ pub(crate) struct PreparedScene {
     retail: StagedAssets<RetailWorldMaterial>,
     sky: StagedAssets<RetailSkyMaterial>,
     images: StagedAssets<Image>,
+    merged: Option<MergedAssets>,
 }
 impl PreparedScene {
     pub fn new(world: &World) -> Self {
         Self { commands: Default::default(), meshes: StagedAssets::new(world),
             materials: StagedAssets::new(world), retail: StagedAssets::new(world),
-            sky: StagedAssets::new(world), images: StagedAssets::new(world) }
+            sky: StagedAssets::new(world), images: StagedAssets::new(world),
+            merged: crate::skate_world::merge_level().then(|| MergedAssets::new(world)) }
+    }
+    /// Host tests exercise the phone merge path.
+    #[cfg(test)]
+    pub fn force_merge(&mut self, world: &World) {
+        self.merged = Some(MergedAssets::new(world));
     }
     pub fn prepare(&mut self, map: Option<&skate_data::skate_map::SkateMap>, root: &std::path::Path) {
         // Every scene starts with the same environment defaults. Map-specific
@@ -95,11 +130,12 @@ impl PreparedScene {
         });
         if let Some(map) = map {
             crate::skate_world::spawn(map, &mut self.commands, &mut self.meshes,
-                &mut self.materials, &mut self.retail, &mut self.images, &crate::retail_render::MaterialTuning::load(root));
+                &mut self.materials, &mut self.retail, &mut self.images, &crate::retail_render::MaterialTuning::load(root),
+                self.merged.as_mut());
             if crate::retail_render::RetailScene::for_map(map) {
                 crate::retail_render::spawn_backdrop(&map.name, root, &mut self.commands, &mut self.meshes, &mut self.materials, &mut self.retail, &mut self.images);
                 crate::retail_render::spawn_sky(&map.name, root, &mut self.commands,
-                    &mut self.meshes, &mut self.images, &mut self.sky, &mut self.retail);
+                    &mut self.meshes, &mut self.images, &mut self.sky, &mut self.retail, self.merged.as_mut());
             } else {
                 custom_lighting(map, &mut self.commands);
                 celestial_bodies(&mut self.commands, &mut self.meshes, &mut self.materials, &mut self.images);
@@ -110,10 +146,11 @@ impl PreparedScene {
     }
     pub fn publish(mut self, world: &mut World) {
         let _span = info_span!("publish_map_assets").entered();
+        let (merged, buffers) = self.merged.take().map(|m| m.publish(world)).unwrap_or_default();
         let owned = MapAssets {
             meshes: self.meshes.publish(world), materials: self.materials.publish(world),
             retail: self.retail.publish(world), sky: self.sky.publish(world),
-            images: self.images.publish(world),
+            images: self.images.publish(world), merged, buffers,
         };
         self.commands.0.apply(world);
         world.insert_resource(owned);
@@ -127,6 +164,8 @@ pub(crate) struct MapAssets {
     retail: Vec<AssetId<RetailWorldMaterial>>,
     sky: Vec<AssetId<RetailSkyMaterial>>,
     images: Vec<AssetId<Image>>,
+    merged: Vec<AssetId<crate::retail_render::MergedWorldMaterial>>,
+    buffers: Vec<AssetId<bevy::render::storage::ShaderStorageBuffer>>,
 }
 
 /// Scene-owned environment; retired with its sun when switching maps.
@@ -287,6 +326,7 @@ impl MapAssets {
         for entity in entities { world.despawn(entity); }
         if let Some(owned) = world.remove_resource::<Self>() {
             fn remove<A: Asset>(world: &mut World, ids: Vec<AssetId<A>>) {
+                if ids.is_empty() { return; }
                 let mut assets = world.resource_mut::<Assets<A>>();
                 for id in ids { assets.remove(id); }
             }
@@ -295,6 +335,8 @@ impl MapAssets {
             remove(world, owned.retail);
             remove(world, owned.sky);
             remove(world, owned.images);
+            remove(world, owned.merged);
+            remove(world, owned.buffers);
         }
     }
 }

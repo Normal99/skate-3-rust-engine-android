@@ -20,8 +20,14 @@ fn fragment(i: VertexOutput)
     let alpha = textureSample(bindings::textures[index.diffuse],bindings::samplers[index.diffuse_sampler],i.uv).a;
     let cutoff = bindings::params[index.params].mode.z;
 #else
+#ifdef MERGED_LEVEL
+    let slot = u32(i.color.z + 0.5);
+    let alpha = bindings::sample_diffuse(slot, i.uv).a;
+    let cutoff = bindings::slots[slot].params.mode.z;
+#else
     let alpha = textureSample(bindings::diffuse,bindings::diffuse_sampler,i.uv).a;
     let cutoff = bindings::p.mode.z;
+#endif
 #endif
 #ifdef RETAIL_ALPHA_TEST
     if alpha < cutoff { discard; }

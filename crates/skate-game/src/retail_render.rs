@@ -39,6 +39,9 @@ impl Plugin for RetailRenderPlugin {
             MaterialPlugin::<RetailWorldMaterial>::default(),
             MaterialPlugin::<RetailSkyMaterial>::default(),
         ));
+        if crate::skate_world::merge_level() {
+            app.add_plugins(MaterialPlugin::<MergedWorldMaterial>::default());
+        }
     }
 }
 
@@ -99,6 +102,10 @@ impl RetailScene {
 #[path = "retail_sky.rs"]
 mod sky;
 pub(crate) use sky::{spawn_sky, RetailSkyMaterial};
+
+#[path = "retail_merged.rs"]
+mod merged;
+pub(crate) use merged::{MergedSlot, MergedWorldMaterial};
 
 #[path = "retail_backdrop.rs"]
 mod backdrop;
@@ -161,6 +168,27 @@ pub(crate) struct RetailWorldMaterial {
     pub shadow_state: Handle<bevy::render::storage::ShaderStorageBuffer>,
     pub alpha: AlphaMode,
     pub two_sided: bool,
+}
+impl RetailWorldMaterial {
+    /// Texture slots in shader order: diffuse, lightmap, normal, detail,
+    /// macro overlay, decal, specular, environment.
+    pub(crate) fn images_mut(&mut self) -> [&mut Option<Handle<Image>>; 8] {
+        [&mut self.diffuse, &mut self.lightmap, &mut self.normal, &mut self.detail,
+            &mut self.macro_map, &mut self.decal, &mut self.specular, &mut self.environment]
+    }
+}
+#[cfg(test)]
+pub(crate) fn test_world_material() -> RetailWorldMaterial {
+    RetailWorldMaterial {
+        params: WorldParams {
+            mode: Vec4::ZERO, foliage_debug: Vec4::ZERO, surface: Vec4::ZERO, family: Vec4::ZERO,
+            fog_ramp: Vec4::ZERO, fog_color: Vec4::ZERO, shadow_color: Vec4::ZERO,
+            sun_direction: Vec4::ZERO, decal: Vec4::ZERO, water: [Vec4::ZERO; 4],
+        },
+        diffuse: None, lightmap: None, normal: None, detail: None, macro_map: None,
+        decal: None, specular: None, environment: None,
+        shadow_state: shadow::BUFFER, alpha: AlphaMode::Opaque, two_sided: false,
+    }
 }
 impl From<&RetailWorldMaterial> for WorldParams {
     fn from(material: &RetailWorldMaterial) -> Self { material.params.clone() }

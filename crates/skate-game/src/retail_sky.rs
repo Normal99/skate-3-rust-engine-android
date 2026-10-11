@@ -169,6 +169,7 @@ pub(crate) fn spawn_sky(
     images: &mut impl crate::map_render::AssetSink<Image>,
     materials: &mut impl crate::map_render::AssetSink<RetailSkyMaterial>,
     world_materials: &mut crate::map_render::StagedAssets<RetailWorldMaterial>,
+    merged: Option<&mut crate::map_render::MergedAssets>,
 ) {
     let (sky, rgba, sun) = match load(root, name) {
         Ok(v) => v,
@@ -186,14 +187,20 @@ pub(crate) fn spawn_sky(
     if let Some(env) = &sky.environment {
         params.settings = Vec4::new(env.anchor_height, 2.5, env.multiplier, env.sun_scale);
         params.sun_direction = Vec3::from_array(env.sun_direction).extend(0.);
-        for (_, material) in world_materials.iter_mut() {
+        let apply = |world: &mut super::WorldParams| {
             // Only the existing tangent-sign term uses this vector. No added
             // directional light energy or imported-world shadow map.
-            material.params.sun_direction = params.sun_direction;
+            world.sun_direction = params.sun_direction;
             if let Some(fog) = &env.fog_frame {
-                material.params.fog_ramp = Vec4::from_array(fog.ramp);
-                material.params.fog_color = Vec4::from_array(fog.colour);
+                world.fog_ramp = Vec4::from_array(fog.ramp);
+                world.fog_color = Vec4::from_array(fog.colour);
             }
+        };
+        for (_, material) in world_materials.iter_mut() {
+            apply(&mut material.params);
+        }
+        for (_, slots) in merged.map(|m| m.slots.iter_mut()).into_iter().flatten() {
+            slots.iter_mut().for_each(|slot| apply(&mut slot.params));
         }
         info!(
             "SKATE_SKY_READY map={name:?} location={:?} anchor={} sun_scale={} multiplier={} authored_direction={:?}",

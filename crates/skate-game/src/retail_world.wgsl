@@ -20,9 +20,16 @@ fn fragment(i: VertexOutput) -> @location(0) vec4<f32> {
     let p = bindings::params[index.params];
     let frame_state = bindings::frames[index.frame_state];
 #else
+#ifdef MERGED_LEVEL
+    // Every vertex of a triangle carries the same slot.
+    let slot = u32(i.color.z + 0.5);
+    let p = bindings::slots[slot].params;
+    let frame_state = bindings::frame_state;
+#else
     let slot = 0u;
     let p = bindings::p;
     let frame_state = bindings::frame_state;
+#endif
 #endif
     let fam = u32(p.mode.x);
     let flags = u32(p.mode.y);

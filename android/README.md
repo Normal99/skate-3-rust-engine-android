@@ -62,6 +62,11 @@ Phone defaults trade some visual detail for frame rate:
   once; lower *Internal resolution* in the game menu if needed.
 - **Texture detail: half** (1/4 of the texture memory) and a **150 m draw
   distance** for level batches.
+- **Merged level objects**: University's ~4,900 material batches cost the
+  engine CPU time every frame per object. Phones put same-sized textures into
+  texture arrays and draw many materials as one object (each vertex carries
+  its material), cut into 80 m cells so culling and the draw distance still
+  work. *Level objects: Separate* restores one object per material, as on PC.
 - **No dynamic shadows from the level** (the skater keeps its own shadow), one
   short shadow cascade, hardware shadow filtering, MSAA and GPU occlusion
   culling off (the depth prepass stays on).
