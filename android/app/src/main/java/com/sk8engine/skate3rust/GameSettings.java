@@ -21,8 +21,10 @@ final class GameSettings {
     int drawDistance = 150;
     /** Experimental: keep the game on the big CPU cores (android.rs prefer_fast_cores). */
     boolean fastCores = false;
-    /** Buildings shade the skater (an extra shadow map of the whole world each frame). */
+    /** The level casts dynamic shadows (buildings onto the skater, custom maps' sun). */
     boolean worldShadows = false;
+    /** Per-system and per-pass timing in the log (costs a little frame time). */
+    boolean detailedTiming = false;
 
     private static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences("launcher", Context.MODE_PRIVATE);
@@ -38,6 +40,7 @@ final class GameSettings {
         s.drawDistance = p.getInt("drawDistance", s.drawDistance);
         s.fastCores = p.getBoolean("fastCoresOptIn", s.fastCores);
         s.worldShadows = p.getBoolean("worldShadows", s.worldShadows);
+        s.detailedTiming = p.getBoolean("detailedTiming", s.detailedTiming);
         return s;
     }
 
@@ -50,6 +53,7 @@ final class GameSettings {
                 .putInt("drawDistance", drawDistance)
                 .putBoolean("fastCoresOptIn", fastCores)
                 .putBoolean("worldShadows", worldShadows)
+                .putBoolean("detailedTiming", detailedTiming)
                 .apply();
     }
 

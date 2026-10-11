@@ -190,6 +190,12 @@ fn load(mut commands: Commands, config: Res<crate::config::Config>, sources: Que
         display_sh: None,
     });
 }
+/// Whether the level casts dynamic shadows. Always on the desktop; on phones
+/// only when the launcher's "Shadows cast by the level" option is enabled.
+pub(crate) fn world_shadows() -> bool {
+    !cfg!(target_os = "android") || std::env::var("SKATE_WORLD_SHADOWS").as_deref() == Ok("1")
+}
+
 /// Phones render world shadow casters into one near cascade instead of four:
 /// each cascade resubmits thousands of world batches every frame.
 pub(crate) fn phone_or(desktop: bevy::light::CascadeShadowConfigBuilder) -> bevy::light::CascadeShadowConfigBuilder {
@@ -205,7 +211,7 @@ fn spawn_shadow_sources(commands: &mut Commands, light: Vec3) {
     // re-renders the world's shadow casters every frame; phones skip it unless
     // asked (the shader then treats the skater as unshadowed by buildings).
     // The player's own shadow onto the world below is unaffected.
-    let world_onto_skater = !cfg!(target_os = "android") || std::env::var("SKATE_WORLD_SHADOWS").as_deref() == Ok("1");
+    let world_onto_skater = world_shadows();
     commands.spawn((
         ShadowSource,
         Name::new("Character shadow visibility"),

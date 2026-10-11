@@ -78,10 +78,11 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     let draw_distance = std::env::var("SKATE_DRAW_DISTANCE").ok().and_then(|v| v.parse().ok()).unwrap_or(150);
     crate::skate_world::DRAW_DISTANCE.store(draw_distance, Ordering::Relaxed);
     eprintln!(
-        "REPORT_META stage=android_host root={} library_base=0x{:x} texture_reduction={reduction} draw_distance={draw_distance} fast_cores={fast_cores:?} world_shadows={} rss_mb={} build={}",
+        "REPORT_META stage=android_host root={} library_base=0x{:x} texture_reduction={reduction} draw_distance={draw_distance} fast_cores={fast_cores:?} world_shadows={} detailed_timing={} rss_mb={} build={}",
         root.display(),
         LIBRARY_BASE.load(Ordering::Relaxed),
         std::env::var("SKATE_WORLD_SHADOWS").as_deref() == Ok("1"),
+        crate::profiling::detailed_timing(),
         resident_mb(),
         env!("SKATE_BUILD_ID")
     );
@@ -416,14 +417,30 @@ fn resident_mb() -> u64 {
         .map_or(0, |pages| pages * 4096 / (1024 * 1024))
 }
 
+/// `a::b::f<c::D, e::F>` -> `f<D, F>`: keep the last segment of every path,
+/// including generic arguments, so per-material systems stay distinguishable.
+fn short_label(label: &str) -> String {
+    let mut out = String::with_capacity(label.len());
+    for c in label.chars() {
+        out.push(c);
+        if out.ends_with("::") {
+            let cut = out[..out.len() - 2].rfind(['<', '>', ',', ' ', '(', '&']).map_or(0, |i| i + 1);
+            out.truncate(cut);
+        }
+    }
+    out
+}
+
 /// Start of the main-world frame, for splitting game logic from rendering.
 #[derive(bevy::prelude::Resource)]
 pub(crate) struct FrameStart(Instant);
 
 pub(crate) fn install_diagnostics(app: &mut bevy::prelude::App) {
     // Per-pass CPU and (with timestamp queries) GPU times, summarised below.
-    app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin)
-        .insert_resource(FrameStart(Instant::now()))
+    if crate::profiling::detailed_timing() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+    }
+    app.insert_resource(FrameStart(Instant::now()))
         .add_systems(bevy::prelude::First, |mut start: bevy::prelude::ResMut<FrameStart>| start.0 = Instant::now())
         .add_systems(bevy::prelude::Last, frame_report);
 }
@@ -480,8 +497,7 @@ fn frame_report(
     times.sort_by(|a, b| b.1.cmp(&a.1));
     let frames = state.window.max(1) as f64;
     let format = |(label, total, runs): &(String, Duration, u32)| {
-        let short = label.strip_prefix("schedule:").unwrap_or(label);
-        let short = short.rsplit("::").next().unwrap_or(short);
+        let short = short_label(label.strip_prefix("schedule:").unwrap_or(label));
         format!("{short}={:.1}ms/{:.1}x", total.as_secs_f64() * 1000. / frames, *runs as f64 / frames)
     };
     let schedules: Vec<String> = times.iter().filter(|t| t.0.starts_with("schedule:")).take(10).map(format).collect();

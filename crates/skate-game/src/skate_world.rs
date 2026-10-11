@@ -587,6 +587,9 @@ pub(crate) fn spawn(
     // Texture roles have different transfer functions even when sharing a record.
     let _span = info_span!("prepare_map_geometry_and_textures").entered();
     let texture_ids = render_texture_ids(&map.textures);
+    // Without level shadows (phone default) the batches are not casters at all,
+    // so Bevy's per-light shadow visibility tests skip thousands of entities.
+    let casts_shadows = crate::retail_character::world_shadows();
     let mut cache = HashMap::<(u32, u8), Handle<Image>>::new();
     let mut texture = |id: u32, role: u8| -> Option<Handle<Image>> {
         let id = texture_ids[id as usize];
@@ -736,6 +739,9 @@ pub(crate) fn spawn(
             if let Some(range) = range {
                 entity.insert(range);
             }
+            if !casts_shadows {
+                entity.insert(bevy::light::NotShadowCaster);
+            }
             continue;
         }
         // Vertex colours above carry retail decal coordinates, never PBR tint.
@@ -775,6 +781,9 @@ pub(crate) fn spawn(
         ));
         if let Some(range) = range {
             entity.insert(range);
+        }
+        if !casts_shadows {
+            entity.insert(bevy::light::NotShadowCaster);
         }
         if let Some(image) = texture(m.textures[1], 1) {
             entity.insert(bevy::pbr::Lightmap {

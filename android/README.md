@@ -54,18 +54,23 @@ View and Menu. The phone's Back gesture opens the game menu.
 
 ## Hitting 60 FPS
 
-The launcher defaults are chosen for a steady 60 FPS attempt on an S20+:
+Phone defaults trade some visual detail for frame rate:
 
-- **Render resolution 720p.** The game surface is fixed to 720 lines and the
-  display hardware upscales it. Native 1080p/1440p costs 2-4x the GPU work.
-- **60 Hz display mode** with vsync, so frames are evenly paced.
-- **MSAA off and GPU occlusion culling off** by default on Android (both can be
-  turned back on in the in-game menu, together with the internal render
-  scale; 67-75 % is the next step down if a map is still too heavy).
+- **Render resolution 720p** surface, upscaled by the display hardware, and
+  **67 % internal resolution** for new installs (in-game menu, *Internal
+  resolution*). The Mali GPU is fill-rate bound, so lowering it helps most.
+- **Texture detail: half** (1/4 of the texture memory) and a **150 m draw
+  distance** for level batches.
+- **No dynamic shadows from the level** (the skater keeps its own shadow), one
+  short shadow cascade, hardware shadow filtering, MSAA and GPU occlusion
+  culling off.
+- **60 Hz** display mode with vsync locks to 60 or 30 FPS; **120 Hz** also
+  allows 40 FPS when a frame misses the 60 FPS deadline.
 
-The desktop renderer was not designed for phones, so 60 FPS is a target, not
-a guarantee; large maps and dense areas may run lower. Samsung Game Booster
-("Game performance: Performance mode") also helps sustained clocks.
+*Fast cores only* (experimental) pins the game to the big CPU cores; one S20+
+restarted with it enabled, so it is off by default. *Performance log:
+Detailed* adds the slowest systems and render passes to the log at a small
+FPS cost; send that log when reporting performance.
 
 ## Troubleshooting
 

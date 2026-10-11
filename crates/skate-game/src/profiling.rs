@@ -92,6 +92,12 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for SystemTimes {
 }
 struct TimedLabel(String);
 
+/// Per-system and per-pass timing on phones costs a little frame time, so it
+/// runs only when the launcher's "Detailed performance log" option is on.
+pub(crate) fn detailed_timing() -> bool {
+    std::env::var("SKATE_DETAILED_TIMING").as_deref() == Ok("1")
+}
+
 /// Drain the per-label totals: (label, total time, runs).
 pub(crate) fn take_system_times() -> Vec<(String, Duration, u32)> {
     SYSTEM_TIMES.lock().ok().and_then(|mut t| t.take()).unwrap_or_default()
@@ -317,7 +323,7 @@ fn init_options(options: Options) -> Result<Option<Guard>, String> {
         .with_writer(std::io::stderr)
         .with_filter(subscriber::filter::FilterFn::new(|m| m.is_event()))
         .with_filter(filter);
-    let systems = cfg!(target_os = "android").then(|| {
+    let systems = (cfg!(target_os = "android") && detailed_timing()).then(|| {
         SystemTimes.with_filter(subscriber::filter::FilterFn::new(|m| {
             m.is_span() && m.target().starts_with("bevy_ecs") && matches!(m.name(), "system" | "schedule")
         }))
