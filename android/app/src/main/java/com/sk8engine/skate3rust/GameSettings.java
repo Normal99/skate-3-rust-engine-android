@@ -25,6 +25,8 @@ final class GameSettings {
     boolean worldShadows = false;
     /** Per-system and per-pass timing in the log (costs a little frame time). */
     boolean detailedTiming = false;
+    /** Present frames as soon as they are ready (capped at the display rate). */
+    boolean uncapped = true;
 
     private static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences("launcher", Context.MODE_PRIVATE);
@@ -41,6 +43,7 @@ final class GameSettings {
         s.fastCores = p.getBoolean("fastCoresOptIn", s.fastCores);
         s.worldShadows = p.getBoolean("worldShadows", s.worldShadows);
         s.detailedTiming = p.getBoolean("detailedTiming", s.detailedTiming);
+        s.uncapped = p.getBoolean("uncapped", s.uncapped);
         return s;
     }
 
@@ -54,6 +57,7 @@ final class GameSettings {
                 .putBoolean("fastCoresOptIn", fastCores)
                 .putBoolean("worldShadows", worldShadows)
                 .putBoolean("detailedTiming", detailedTiming)
+                .putBoolean("uncapped", uncapped)
                 .apply();
     }
 

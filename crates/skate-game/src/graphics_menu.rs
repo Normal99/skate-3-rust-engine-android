@@ -160,7 +160,10 @@ impl Plugin for GraphicsMenuPlugin {
             .add_systems(PostUpdate, crate::map_render::position_celestial_bodies.before(bevy::transform::TransformSystems::Propagate))
             .add_systems(Last, pace);
         if cfg!(target_os = "android") {
-            app.add_systems(PreUpdate, fit_ui_scale);
+            app.add_systems(PreUpdate, fit_ui_scale)
+                // The only shadow map left on phones covers the skater within
+                // 24 m; 1024 texels is plenty and a quarter of the fill.
+                .insert_resource(bevy::light::DirectionalLightShadowMap { size: 1024 });
         }
     }
 }
@@ -281,9 +284,10 @@ fn setup(
             .resolution
             .set_physical_resolution(settings.width, settings.height);
     }
-    // Android paces frames to the display mode SkateActivity requests (60 Hz by
-    // default); tearing-free vsync is the only reliable mode there.
-    window.present_mode = if cfg!(target_os = "android") { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
+    // Android: "uncapped" uses the mailbox swapchain (no tearing on Android) so
+    // a 20 ms frame shows at 50 FPS instead of vsync dropping it to 30; `pace`
+    // then caps it at the display rate. "Locked" keeps vsync.
+    window.present_mode = if cfg!(target_os = "android") && !android_uncapped() { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
     let size = settings.internal_size(window.physical_size());
     let mut image = Image::new_target_texture(size.x, size.y, TextureFormat::Rgba8UnormSrgb, None);
     image.sampler = ImageSampler::linear();
@@ -808,12 +812,26 @@ fn labels(
         };
     }
 }
+/// Phone frame pacing chosen in the launcher (uncapped is the default).
+fn android_uncapped() -> bool {
+    cfg!(target_os = "android") && std::env::var("SKATE_UNCAPPED").as_deref() != Ok("0")
+}
+
+/// Uncapped phone presentation never runs faster than the display mode.
+fn android_refresh_cap() -> u32 {
+    if !android_uncapped() {
+        return 0;
+    }
+    std::env::var("SKATE_REFRESH").ok().and_then(|v| v.parse().ok()).unwrap_or(60)
+}
+
 fn pace(menu: Option<Res<Menu>>, mut pacer: ResMut<FramePacer>) {
     let Some(menu) = menu else {
         return;
     };
-    if menu.settings.fps > 0 {
-        let period = Duration::from_secs_f64(1. / f64::from(menu.settings.fps));
+    let limit = if menu.settings.fps > 0 { menu.settings.fps } else { android_refresh_cap() };
+    if limit > 0 {
+        let period = Duration::from_secs_f64(1. / f64::from(limit));
         if let Some(wait) = period.checked_sub(pacer.0.elapsed()) {
             std::thread::sleep(wait);
         }

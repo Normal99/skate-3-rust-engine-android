@@ -64,8 +64,11 @@ Phone defaults trade some visual detail for frame rate:
 - **No dynamic shadows from the level** (the skater keeps its own shadow), one
   short shadow cascade, hardware shadow filtering, MSAA and GPU occlusion
   culling off.
-- **60 Hz** display mode with vsync locks to 60 or 30 FPS; **120 Hz** also
-  allows 40 FPS when a frame misses the 60 FPS deadline.
+- **Uncapped frame pacing**: frames are shown as soon as they are ready
+  (Android's mailbox swapchain, no tearing), capped at the display rate, so a
+  20 ms frame shows at 50 FPS instead of vsync dropping it to 30. *Locked*
+  restores vsync. A 1024 shadow map for the skater's shadow, and an Android 13
+  performance hint session that raises CPU clocks when frames run late.
 
 *Fast cores only* (experimental) pins the game to the big CPU cores; one S20+
 restarted with it enabled, so it is off by default. *Performance log:

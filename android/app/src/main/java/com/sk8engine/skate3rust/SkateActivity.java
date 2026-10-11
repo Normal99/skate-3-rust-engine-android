@@ -43,6 +43,8 @@ public class SkateActivity extends GameActivity {
             android.system.Os.setenv("SKATE_FAST_CORES", settings.fastCores ? "1" : "0", true);
             android.system.Os.setenv("SKATE_WORLD_SHADOWS", settings.worldShadows ? "1" : "0", true);
             android.system.Os.setenv("SKATE_DETAILED_TIMING", settings.detailedTiming ? "1" : "0", true);
+            android.system.Os.setenv("SKATE_UNCAPPED", settings.uncapped ? "1" : "0", true);
+            android.system.Os.setenv("SKATE_REFRESH", String.valueOf(settings.refreshRate), true);
         } catch (android.system.ErrnoException ignored) {
             // The engine then uses its phone default.
         }

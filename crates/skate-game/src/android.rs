@@ -26,6 +26,54 @@ static PIPE_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
 static LOG_THREAD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 /// Load address of libskate3rust.so, for symbolising crash addresses.
 static LIBRARY_BASE: AtomicUsize = AtomicUsize::new(0);
+/// Thread id of android_main (Bevy's main-world thread) and the threads that
+/// existed before Bevy started (Java/system), for the performance hint session.
+static MAIN_TID: AtomicI32 = AtomicI32::new(0);
+static PRE_BEVY_TIDS: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+
+fn thread_ids() -> Vec<i32> {
+    std::fs::read_dir("/proc/self/task").map(|dir| dir.filter_map(|e| e.ok()?.file_name().to_str()?.parse().ok()).collect()).unwrap_or_default()
+}
+
+/// Android 13 performance hint session (APerformanceHint, loaded at run time
+/// so older Android simply skips it). Reporting each frame's duration against
+/// the display period lets the scheduler raise CPU clocks when frames run
+/// late, instead of waiting for its slower load-based ramp.
+struct HintSession {
+    session: *mut c_void,
+    report: unsafe extern "C" fn(*mut c_void, i64) -> c_int,
+}
+// SAFETY: the NDK session handle is thread-safe for reporting.
+unsafe impl Send for HintSession {}
+unsafe impl Sync for HintSession {}
+static HINT: OnceLock<Option<HintSession>> = OnceLock::new();
+
+fn create_hint_session(tids: &[i32], target_ns: i64) -> Option<HintSession> {
+    // SAFETY: symbols are looked up by their NDK names and called with the
+    // documented signatures; null results disable the feature.
+    unsafe {
+        let library = libc::dlopen(c"libandroid.so".as_ptr(), libc::RTLD_NOW);
+        if library.is_null() {
+            return None;
+        }
+        let symbol = |name: &CStr| {
+            let pointer = libc::dlsym(library, name.as_ptr());
+            (!pointer.is_null()).then_some(pointer)
+        };
+        let get: unsafe extern "C" fn() -> *mut c_void = std::mem::transmute(symbol(c"APerformanceHint_getManager")?);
+        let create: unsafe extern "C" fn(*mut c_void, *const i32, usize, i64) -> *mut c_void =
+            std::mem::transmute(symbol(c"APerformanceHint_createSession")?);
+        let report: unsafe extern "C" fn(*mut c_void, i64) -> c_int =
+            std::mem::transmute(symbol(c"APerformanceHint_reportActualWorkDuration")?);
+        let manager = get();
+        if manager.is_null() {
+            return None;
+        }
+        let session = create(manager, tids.as_ptr(), tids.len(), target_ns);
+        (!session.is_null()).then_some(HintSession { session, report })
+    }
+}
+
 /// Present while a game run is in progress (see LauncherActivity).
 const RUN_MARKER: &str = "logs/run-in-progress.txt";
 static RUN_ROOT: OnceLock<PathBuf> = OnceLock::new();
@@ -44,6 +92,9 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     let _ = std::fs::create_dir_all(files.join("tmp"));
     redirect_output(&root.join("logs/latest.log"));
     install_signal_handlers();
+    // SAFETY: gettid has no preconditions.
+    MAIN_TID.store(unsafe { libc::gettid() }, Ordering::Relaxed);
+    *PRE_BEVY_TIDS.lock().unwrap() = thread_ids();
     // Before Bevy starts: its threads inherit this affinity and its task pools
     // size themselves from it (available_parallelism reads the affinity mask).
     // Opt-in: pinning every game thread to the big cores raised power draw
@@ -451,6 +502,7 @@ pub(crate) struct FrameWindow {
     window: u64,
     main_seconds: f64,
     started: Option<Instant>,
+    previous: Option<Instant>,
 }
 
 /// Logs frame rate, memory, main-world (game logic) time and the slowest
@@ -464,6 +516,22 @@ fn frame_report(
 ) {
     let now = Instant::now();
     let started = *state.started.get_or_insert(now);
+    // Performance hint: once Bevy's threads exist, open a session for them and
+    // the main thread, then report every frame's duration.
+    if state.frames == 120 {
+        let refresh: i64 = std::env::var("SKATE_REFRESH").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+        let existing = PRE_BEVY_TIDS.lock().map(|t| t.clone()).unwrap_or_default();
+        let mut tids: Vec<i32> = thread_ids().into_iter().filter(|t| !existing.contains(t)).collect();
+        tids.push(MAIN_TID.load(Ordering::Relaxed));
+        tids.truncate(32);
+        let created = HINT.get_or_init(|| create_hint_session(&tids, 1_000_000_000 / refresh.max(1)));
+        eprintln!("REPORT_META perf_hint={} threads={} target_hz={refresh}", created.is_some(), tids.len());
+    }
+    if let (Some(previous), Some(Some(hint))) = (state.previous, HINT.get()) {
+        // SAFETY: valid session for the life of the process.
+        unsafe { (hint.report)(hint.session, now.duration_since(previous).as_nanos().min(i64::MAX as u128) as i64) };
+    }
+    state.previous = Some(now);
     state.frames += 1;
     state.window += 1;
     state.main_seconds += now.duration_since(start.0).as_secs_f64();

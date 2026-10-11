@@ -41,6 +41,9 @@ public class LauncherActivity extends Activity {
     private static final String[] SHADOW_LABELS = {
             "Off  (recommended, faster; the skater keeps its own shadow)",
             "On  (buildings shade the skater; custom maps' sun shadows; slower)"};
+    private static final String[] PACING_LABELS = {
+            "Uncapped  (recommended: shows every frame, e.g. 45 FPS, up to the display rate)",
+            "Locked to vsync  (even pacing, but drops from 60 straight to 30)"};
     private static final String[] TIMING_LABELS = {
             "Basic  (FPS and memory)", "Detailed  (slowest systems and passes; costs a little FPS)"};
     private static final String[] CORE_LABELS = {
@@ -48,7 +51,7 @@ public class LauncherActivity extends Activity {
             "Fast cores only  (experimental: more power draw, restarted one S20+)"};
     private static final int[] RATES = {60, 120};
     private static final String[] RATE_LABELS = {
-            "60 Hz  (locks to 60 or 30 FPS)", "120 Hz  (allows 40 FPS between 30 and 60; uses more battery)"};
+            "60 Hz  (recommended)", "120 Hz  (allows above 60 FPS; uses more battery)"};
     private static final String[] TOUCH_LABELS = {
             "On-screen controls: hide when a controller is connected",
             "On-screen controls: always show", "On-screen controls: off (controller only)"};
@@ -115,6 +118,8 @@ public class LauncherActivity extends Activity {
         column.addView(choices(TIMING_LABELS, settings.detailedTiming ? 1 : 0, i -> settings.detailedTiming = i == 1));
         column.addView(heading("CPU"));
         column.addView(choices(CORE_LABELS, settings.fastCores ? 1 : 0, i -> settings.fastCores = i == 1));
+        column.addView(heading("Frame pacing"));
+        column.addView(choices(PACING_LABELS, settings.uncapped ? 0 : 1, i -> settings.uncapped = i == 0));
         column.addView(heading("Display refresh rate"));
         column.addView(choices(RATE_LABELS, indexOf(RATES, settings.refreshRate),
                 i -> settings.refreshRate = RATES[i]));
