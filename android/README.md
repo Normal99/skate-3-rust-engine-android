@@ -56,14 +56,15 @@ View and Menu. The phone's Back gesture opens the game menu.
 
 Phone defaults trade some visual detail for frame rate:
 
-- **Render resolution 720p** surface, upscaled by the display hardware, at
-  100 % internal resolution. On an S20+ the frame rate was the same at 25 %,
-  so the remaining limit is not GPU fill rate.
+- **Render resolution 720p** surface, upscaled by the display hardware. The
+  Mali GPU is fill-rate bound (S20+: 8 FPS at 100 % internal resolution,
+  ~30 at 25 %), so phones always render a depth prepass to shade each pixel
+  once; lower *Internal resolution* in the game menu if needed.
 - **Texture detail: half** (1/4 of the texture memory) and a **150 m draw
   distance** for level batches.
 - **No dynamic shadows from the level** (the skater keeps its own shadow), one
   short shadow cascade, hardware shadow filtering, MSAA and GPU occlusion
-  culling off.
+  culling off (the depth prepass stays on).
 - **Uncapped frame pacing**: frames are shown as soon as they are ready
   (Android's mailbox swapchain, no tearing), capped at the display rate, so a
   20 ms frame shows at 50 FPS instead of vsync dropping it to 30. *Locked*

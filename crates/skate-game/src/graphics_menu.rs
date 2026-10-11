@@ -637,6 +637,16 @@ fn apply(
                 commands
                     .entity(entity)
                     .insert((DepthPrepass, OcclusionCulling));
+            } else if cfg!(target_os = "android") {
+                // Phones keep the depth prepass without GPU occlusion culling:
+                // without it every stacked surface (and University's alpha-
+                // tested foliage, which defeats early depth rejection) is fully
+                // shaded, and frame time scaled with pixel count (S20+: 8 FPS
+                // at 100% of 720p, ~30 at 25%).
+                commands
+                    .entity(entity)
+                    .insert(DepthPrepass)
+                    .remove::<OcclusionCulling>();
             } else {
                 commands
                     .entity(entity)
