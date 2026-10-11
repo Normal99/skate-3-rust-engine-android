@@ -257,6 +257,8 @@ fn fragment(i: VertexOutput) -> @location(0) vec4<f32> {
     // Reduced curve is the full curve with the linear input capped at one.
     if fam == 8u { xe = min(xe,vec3<f32>(1.0)); }
     if p.foliage_debug.w != 0.0 { return vec4<f32>(p.foliage_debug.rgb, 1.0); }
+#ifdef RETAIL_ALPHA_TEST
     if a.a < p.mode.z { discard; }
+#endif
     return vec4<f32>(xe,alpha);
 }

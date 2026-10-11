@@ -198,11 +198,16 @@ impl RetailWorldMaterial {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RetailKey {
     two_sided: bool,
+    /// The material has an alpha cutoff (mode.z >= 0). Only these pipelines
+    /// contain `discard`: its mere presence disables early depth writes and
+    /// Forward Pixel Kill on tile-based GPUs, even when it never fires.
+    alpha_test: bool,
 }
 impl From<&RetailWorldMaterial> for RetailKey {
     fn from(m: &RetailWorldMaterial) -> Self {
         Self {
             two_sided: m.two_sided,
+            alpha_test: m.params.mode.z >= 0.,
         }
     }
 }
@@ -228,6 +233,11 @@ impl Material for RetailWorldMaterial {
         } else {
             Some(bevy::render::render_resource::Face::Back)
         };
+        if key.bind_group_data.alpha_test {
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("RETAIL_ALPHA_TEST".into());
+            }
+        }
         Ok(())
     }
 }

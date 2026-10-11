@@ -23,7 +23,9 @@ fn fragment(i: VertexOutput)
     let alpha = textureSample(bindings::diffuse,bindings::diffuse_sampler,i.uv).a;
     let cutoff = bindings::p.mode.z;
 #endif
+#ifdef RETAIL_ALPHA_TEST
     if alpha < cutoff { discard; }
+#endif
 #ifdef PREPASS_FRAGMENT
     var out: FragmentOutput;
 #ifdef NORMAL_PREPASS

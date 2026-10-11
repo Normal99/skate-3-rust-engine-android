@@ -641,7 +641,12 @@ pub(crate) fn spawn(
                         format,
                         RenderAssetUsages::RENDER_WORLD,
                     );
-                    if role == 3 || role == 6 || cube {
+                    // Phones also mip clamped retail textures (role 4: lightmaps
+                    // and clamped surfaces) and PBR colour/normal maps (0, 2):
+                    // sampling full-size textures for distant surfaces thrashes
+                    // the Mali texture cache. Role 1 is half-float, not RGBA8.
+                    let phone_mips = cfg!(target_os = "android") && matches!(role, 0 | 2 | 4);
+                    if role == 3 || role == 6 || cube || phone_mips {
                         let (bytes, levels) = crate::retail_render::mip_chain(&source.rgba, source.width, height, layers);
                         image.data = Some(bytes);
                         image.texture_descriptor.mip_level_count = levels;
