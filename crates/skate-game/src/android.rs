@@ -78,9 +78,10 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     let draw_distance = std::env::var("SKATE_DRAW_DISTANCE").ok().and_then(|v| v.parse().ok()).unwrap_or(150);
     crate::skate_world::DRAW_DISTANCE.store(draw_distance, Ordering::Relaxed);
     eprintln!(
-        "REPORT_META stage=android_host root={} library_base=0x{:x} texture_reduction={reduction} draw_distance={draw_distance} fast_cores={fast_cores:?} rss_mb={} build={}",
+        "REPORT_META stage=android_host root={} library_base=0x{:x} texture_reduction={reduction} draw_distance={draw_distance} fast_cores={fast_cores:?} world_shadows={} rss_mb={} build={}",
         root.display(),
         LIBRARY_BASE.load(Ordering::Relaxed),
+        std::env::var("SKATE_WORLD_SHADOWS").as_deref() == Ok("1"),
         resident_mb(),
         env!("SKATE_BUILD_ID")
     );

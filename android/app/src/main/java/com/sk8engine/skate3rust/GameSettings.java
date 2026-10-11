@@ -21,6 +21,8 @@ final class GameSettings {
     int drawDistance = 150;
     /** Experimental: keep the game on the big CPU cores (android.rs prefer_fast_cores). */
     boolean fastCores = false;
+    /** Buildings shade the skater (an extra shadow map of the whole world each frame). */
+    boolean worldShadows = false;
 
     private static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences("launcher", Context.MODE_PRIVATE);
@@ -35,6 +37,7 @@ final class GameSettings {
         s.textureReduction = p.getInt("textureReduction", s.textureReduction);
         s.drawDistance = p.getInt("drawDistance", s.drawDistance);
         s.fastCores = p.getBoolean("fastCoresOptIn", s.fastCores);
+        s.worldShadows = p.getBoolean("worldShadows", s.worldShadows);
         return s;
     }
 
@@ -46,6 +49,7 @@ final class GameSettings {
                 .putInt("textureReduction", textureReduction)
                 .putInt("drawDistance", drawDistance)
                 .putBoolean("fastCoresOptIn", fastCores)
+                .putBoolean("worldShadows", worldShadows)
                 .apply();
     }
 

@@ -50,7 +50,8 @@ impl Default for GraphicsSettings {
         Self {
             width: 1280,
             height: 800,
-            scale: 100,
+            // Phones are fill-rate bound at the full surface size.
+            scale: if cfg!(target_os = "android") { 67 } else { 100 },
             // Phones: MSAA textures are stored rather than resolved on-tile by
             // this renderer, and GPU occlusion culling costs more than it saves
             // on mobile GPUs. Both stay available in the menu.

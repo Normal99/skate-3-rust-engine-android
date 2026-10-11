@@ -38,6 +38,9 @@ public class LauncherActivity extends Activity {
     private static final int[] DISTANCES = {100, 150, 250, 0};
     private static final String[] DISTANCE_LABELS = {
             "100 m  (fastest)", "150 m  (recommended)", "250 m", "Unlimited  (slowest, like PC)"};
+    private static final String[] SHADOW_LABELS = {
+            "Off  (recommended, faster; the skater keeps its own shadow)",
+            "Buildings also shade the skater  (slower)"};
     private static final String[] CORE_LABELS = {
             "All CPU cores  (recommended)",
             "Fast cores only  (experimental: more power draw, restarted one S20+)"};
@@ -104,6 +107,8 @@ public class LauncherActivity extends Activity {
         column.addView(heading("Draw distance"));
         column.addView(choices(DISTANCE_LABELS, indexOf(DISTANCES, settings.drawDistance),
                 i -> settings.drawDistance = DISTANCES[i]));
+        column.addView(heading("World shadows on the skater"));
+        column.addView(choices(SHADOW_LABELS, settings.worldShadows ? 1 : 0, i -> settings.worldShadows = i == 1));
         column.addView(heading("CPU"));
         column.addView(choices(CORE_LABELS, settings.fastCores ? 1 : 0, i -> settings.fastCores = i == 1));
         column.addView(heading("Display refresh rate"));

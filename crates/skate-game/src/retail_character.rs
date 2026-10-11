@@ -201,13 +201,17 @@ pub(crate) fn phone_or(desktop: bevy::light::CascadeShadowConfigBuilder) -> bevy
 }
 
 fn spawn_shadow_sources(commands: &mut Commands, light: Vec3) {
-    // World + skater casters, sampled only by the character shader.
+    // World + skater casters, sampled only by the character shader. Its map
+    // re-renders the world's shadow casters every frame; phones skip it unless
+    // asked (the shader then treats the skater as unshadowed by buildings).
+    // The player's own shadow onto the world below is unaffected.
+    let world_onto_skater = !cfg!(target_os = "android") || std::env::var("SKATE_WORLD_SHADOWS").as_deref() == Ok("1");
     commands.spawn((
         ShadowSource,
         Name::new("Character shadow visibility"),
         DirectionalLight {
             illuminance: 0.,
-            shadows_enabled: true,
+            shadows_enabled: world_onto_skater,
             affects_lightmapped_mesh_diffuse: false,
             ..default()
         },
