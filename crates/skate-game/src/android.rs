@@ -41,6 +41,9 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     let _ = std::fs::create_dir_all(files.join("tmp"));
     redirect_output(&root.join("logs/latest.log"));
     install_signal_handlers();
+    // Before Bevy starts: its threads inherit this affinity and its task pools
+    // size themselves from it (available_parallelism reads the affinity mask).
+    let fast_cores = if std::env::var("SKATE_FAST_CORES").as_deref() != Ok("0") { prefer_fast_cores() } else { Vec::new() };
     // SAFETY: runs before Bevy or any game thread starts; the Java side never
     // reads the native environment.
     unsafe {
@@ -59,7 +62,7 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     let draw_distance = std::env::var("SKATE_DRAW_DISTANCE").ok().and_then(|v| v.parse().ok()).unwrap_or(150);
     crate::skate_world::DRAW_DISTANCE.store(draw_distance, Ordering::Relaxed);
     eprintln!(
-        "REPORT_META stage=android_host root={} library_base=0x{:x} texture_reduction={reduction} draw_distance={draw_distance} rss_mb={} build={}",
+        "REPORT_META stage=android_host root={} library_base=0x{:x} texture_reduction={reduction} draw_distance={draw_distance} fast_cores={fast_cores:?} rss_mb={} build={}",
         root.display(),
         LIBRARY_BASE.load(Ordering::Relaxed),
         resident_mb(),
@@ -79,6 +82,33 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     // Bevy cannot be initialised twice in one process, and Android reuses
     // processes between launches. End it so the next launch starts clean.
     std::process::exit(code);
+}
+
+/// Restrict the game to the fastest CPU cores. Phone SoCs mix big and little
+/// cores (Exynos 990: 2 M5 + 2 A76 + 4 A55); Bevy's parallel systems landing
+/// on a little core make every frame wait for it. Returns the chosen cores.
+fn prefer_fast_cores() -> Vec<usize> {
+    let max_freq = |cpu: usize| -> Option<u64> {
+        std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{cpu}/cpufreq/cpuinfo_max_freq")).ok()?.trim().parse().ok()
+    };
+    let cpus: Vec<(usize, u64)> = (0..16).filter_map(|cpu| Some((cpu, max_freq(cpu)?))).collect();
+    let Some(&(_, fastest)) = cpus.iter().max_by_key(|(_, f)| *f) else { return Vec::new() };
+    // Big and prime cores; never fewer than two, never every core.
+    let chosen: Vec<usize> = cpus.iter().filter(|(_, f)| *f * 4 >= fastest * 3).map(|(c, _)| *c).collect();
+    if chosen.len() < 2 || chosen.len() == cpus.len() {
+        return Vec::new();
+    }
+    // SAFETY: a zeroed cpu_set_t is empty; sched_setaffinity(0) affects this thread.
+    unsafe {
+        let mut set: libc::cpu_set_t = std::mem::zeroed();
+        for &cpu in &chosen {
+            libc::CPU_SET(cpu, &mut set);
+        }
+        if libc::sched_setaffinity(0, std::mem::size_of::<libc::cpu_set_t>(), &set) != 0 {
+            return Vec::new();
+        }
+    }
+    chosen
 }
 
 /// Folder holding `data/` (or `assets/`), settings, logs and mods. The shared
@@ -418,21 +448,30 @@ fn frame_report(
         .collect();
     passes.sort_by(|a, b| b.0.total_cmp(&a.0));
     let top: Vec<String> = passes.iter().take(6).map(|(ms, name)| format!("{name}={ms:.1}ms")).collect();
-    // Main-world CPU per system/schedule, averaged per frame, slowest first.
-    let mut systems = crate::profiling::take_system_times();
-    systems.sort_by(|a, b| b.1.cmp(&a.1));
+    // CPU per schedule and per individual system, averaged per frame. The
+    // executor wrappers are left out so the slowest real systems show.
+    let mut times = crate::profiling::take_system_times();
+    times.sort_by(|a, b| b.1.cmp(&a.1));
     let frames = state.window.max(1) as f64;
-    let systems: Vec<String> = systems.iter().take(14).map(|(label, total, runs)| {
-        let short = label.rsplit("::").next().unwrap_or(label);
+    let format = |(label, total, runs): &(String, Duration, u32)| {
+        let short = label.strip_prefix("schedule:").unwrap_or(label);
+        let short = short.rsplit("::").next().unwrap_or(short);
         format!("{short}={:.1}ms/{:.1}x", total.as_secs_f64() * 1000. / frames, *runs as f64 / frames)
-    }).collect();
+    };
+    let schedules: Vec<String> = times.iter().filter(|t| t.0.starts_with("schedule:")).take(10).map(format).collect();
+    let wrappers = ["run_main", "run_fixed_main", "run_fixed_main_schedule", "render_system"];
+    let render_ms = times.iter().find(|t| t.0.ends_with("render_system")).map_or(0., |t| t.1.as_secs_f64() * 1000. / frames);
+    let systems: Vec<String> = times.iter()
+        .filter(|t| !t.0.starts_with("schedule:") && !wrappers.iter().any(|w| t.0.ends_with(w)))
+        .take(16).map(format).collect();
     eprintln!(
-        "REPORT_META fps={:.1} frames={} rss_mb={} main_ms={:.1} passes=[{}] systems=[{}]",
+        "REPORT_META fps={:.1} frames={} rss_mb={} main_ms={:.1} render_ms={render_ms:.1} passes=[{}]\nREPORT_META schedules=[{}]\nREPORT_META systems=[{}]",
         state.window as f64 / elapsed.as_secs_f64(),
         state.frames,
         resident_mb(),
         state.main_seconds * 1000. / state.window as f64,
         top.join(" "),
+        schedules.join(" "),
         systems.join(" ")
     );
     state.window = 0;

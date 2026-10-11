@@ -19,6 +19,8 @@ final class GameSettings {
     int textureReduction = 1;
     /** Metres of world drawn around the camera (0 = everything); see skate_world.rs. */
     int drawDistance = 150;
+    /** Keep the game on the big CPU cores (see android.rs prefer_fast_cores). */
+    boolean fastCores = true;
 
     private static SharedPreferences prefs(Context context) {
         return context.getSharedPreferences("launcher", Context.MODE_PRIVATE);
@@ -32,6 +34,7 @@ final class GameSettings {
         s.touchMode = p.getInt("touchMode", s.touchMode);
         s.textureReduction = p.getInt("textureReduction", s.textureReduction);
         s.drawDistance = p.getInt("drawDistance", s.drawDistance);
+        s.fastCores = p.getBoolean("fastCores", s.fastCores);
         return s;
     }
 
@@ -42,6 +45,7 @@ final class GameSettings {
                 .putInt("touchMode", touchMode)
                 .putInt("textureReduction", textureReduction)
                 .putInt("drawDistance", drawDistance)
+                .putBoolean("fastCores", fastCores)
                 .apply();
     }
 

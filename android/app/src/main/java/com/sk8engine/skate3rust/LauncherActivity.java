@@ -38,8 +38,11 @@ public class LauncherActivity extends Activity {
     private static final int[] DISTANCES = {100, 150, 250, 0};
     private static final String[] DISTANCE_LABELS = {
             "100 m  (fastest)", "150 m  (recommended)", "250 m", "Unlimited  (slowest, like PC)"};
+    private static final String[] CORE_LABELS = {
+            "Fast cores only  (recommended, steadier frame times)", "All CPU cores"};
     private static final int[] RATES = {60, 120};
-    private static final String[] RATE_LABELS = {"60 Hz  (recommended)", "120 Hz  (needs a very light scene)"};
+    private static final String[] RATE_LABELS = {
+            "60 Hz  (locks to 60 or 30 FPS)", "120 Hz  (allows 40 FPS between 30 and 60; uses more battery)"};
     private static final String[] TOUCH_LABELS = {
             "On-screen controls: hide when a controller is connected",
             "On-screen controls: always show", "On-screen controls: off (controller only)"};
@@ -100,6 +103,8 @@ public class LauncherActivity extends Activity {
         column.addView(heading("Draw distance"));
         column.addView(choices(DISTANCE_LABELS, indexOf(DISTANCES, settings.drawDistance),
                 i -> settings.drawDistance = DISTANCES[i]));
+        column.addView(heading("CPU"));
+        column.addView(choices(CORE_LABELS, settings.fastCores ? 0 : 1, i -> settings.fastCores = i == 0));
         column.addView(heading("Display refresh rate"));
         column.addView(choices(RATE_LABELS, indexOf(RATES, settings.refreshRate),
                 i -> settings.refreshRate = RATES[i]));

@@ -77,10 +77,16 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for SystemTimes {
         let Some(span) = ctx.span(id) else { return };
         let extensions = span.extensions();
         let Some(TimedLabel(label)) = extensions.get::<TimedLabel>() else { return };
+        let elapsed = start.elapsed();
         if let Ok(mut times) = SYSTEM_TIMES.lock() {
-            let entry = times.get_or_insert_with(HashMap::new).entry(label.clone()).or_default();
-            entry.0 += start.elapsed();
-            entry.1 += 1;
+            let times = times.get_or_insert_with(HashMap::new);
+            // Look up by &str first: allocating per span exit costs real time on phones.
+            if let Some(entry) = times.get_mut(label.as_str()) {
+                entry.0 += elapsed;
+                entry.1 += 1;
+            } else {
+                times.insert(label.clone(), (elapsed, 1));
+            }
         }
     }
 }
