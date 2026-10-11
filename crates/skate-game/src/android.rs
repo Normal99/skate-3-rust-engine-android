@@ -26,6 +26,9 @@ static PIPE_WRITE_FD: AtomicI32 = AtomicI32::new(-1);
 static LOG_THREAD: Mutex<Option<JoinHandle<()>>> = Mutex::new(None);
 /// Load address of libskate3rust.so, for symbolising crash addresses.
 static LIBRARY_BASE: AtomicUsize = AtomicUsize::new(0);
+/// Present while a game run is in progress (see LauncherActivity).
+const RUN_MARKER: &str = "logs/run-in-progress.txt";
+static RUN_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
 #[unsafe(no_mangle)]
 fn android_main(app: bevy::android::android_activity::AndroidApp) {
@@ -43,7 +46,9 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
     install_signal_handlers();
     // Before Bevy starts: its threads inherit this affinity and its task pools
     // size themselves from it (available_parallelism reads the affinity mask).
-    let fast_cores = if std::env::var("SKATE_FAST_CORES").as_deref() != Ok("0") { prefer_fast_cores() } else { Vec::new() };
+    // Opt-in: pinning every game thread to the big cores raised power draw
+    // enough that an S20+ restarted on the first launch with it enabled.
+    let fast_cores = if std::env::var("SKATE_FAST_CORES").as_deref() == Ok("1") { prefer_fast_cores() } else { Vec::new() };
     // SAFETY: runs before Bevy or any game thread starts; the Java side never
     // reads the native environment.
     unsafe {
@@ -55,6 +60,17 @@ fn android_main(app: bevy::android::android_activity::AndroidApp) {
         std::env::set_var("RUST_BACKTRACE", "1");
     }
     let _ = std::env::set_current_dir(&root);
+    // Removed on a clean exit; the launcher reports a run that never finished
+    // (game killed or phone restarted) together with the settings it used.
+    if let Ok(mut marker) = std::fs::File::create(root.join(RUN_MARKER)) {
+        let _ = writeln!(marker, "started_unix={} texture_reduction={} draw_distance={} fast_cores={}",
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()),
+            std::env::var("SKATE_TEXTURE_REDUCTION").unwrap_or_default(),
+            std::env::var("SKATE_DRAW_DISTANCE").unwrap_or_default(),
+            std::env::var("SKATE_FAST_CORES").unwrap_or_default());
+        let _ = marker.sync_all();
+    }
+    let _ = RUN_ROOT.set(root.clone());
     // Uncompressed RGBA map textures do not fit phone memory at authored size
     // (University: ~2,000 textures). SkateActivity passes the launcher choice.
     let reduction = std::env::var("SKATE_TEXTURE_REDUCTION").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
@@ -151,8 +167,14 @@ fn redirect_output(log: &Path) {
     let mut file = file;
     let thread = std::thread::Builder::new().name("android-log".into()).spawn(move || {
         let tag = CString::new("skate3rust").unwrap();
+        let mut synced = Instant::now();
         for line in BufReader::new(reader).split(b'\n').map_while(Result::ok) {
             let _ = file.write_all(&line).and_then(|_| file.write_all(b"\n"));
+            // A phone restart drops unwritten pages; keep at most ~0.5 s at risk.
+            if synced.elapsed() >= Duration::from_millis(500) {
+                let _ = file.sync_data();
+                synced = Instant::now();
+            }
             let text = CString::new(line.into_iter().filter(|&b| b != 0).collect::<Vec<_>>()).unwrap_or_default();
             // SAFETY: both strings are NUL-terminated and outlive the call.
             unsafe { __android_log_write(4, tag.as_ptr(), text.as_ptr()) };
@@ -166,6 +188,9 @@ fn redirect_output(log: &Path) {
 /// Drain everything already written to stdout/stderr into the log before
 /// the process ends (process::exit would otherwise drop the last lines).
 fn finish_log() {
+    if let Some(root) = RUN_ROOT.get() {
+        let _ = std::fs::remove_file(root.join(RUN_MARKER));
+    }
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     // SAFETY: replaces our own descriptors; the pipe reader then sees EOF.

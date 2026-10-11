@@ -39,7 +39,8 @@ public class LauncherActivity extends Activity {
     private static final String[] DISTANCE_LABELS = {
             "100 m  (fastest)", "150 m  (recommended)", "250 m", "Unlimited  (slowest, like PC)"};
     private static final String[] CORE_LABELS = {
-            "Fast cores only  (recommended, steadier frame times)", "All CPU cores"};
+            "All CPU cores  (recommended)",
+            "Fast cores only  (experimental: more power draw, restarted one S20+)"};
     private static final int[] RATES = {60, 120};
     private static final String[] RATE_LABELS = {
             "60 Hz  (locks to 60 or 30 FPS)", "120 Hz  (allows 40 FPS between 30 and 60; uses more battery)"};
@@ -104,7 +105,7 @@ public class LauncherActivity extends Activity {
         column.addView(choices(DISTANCE_LABELS, indexOf(DISTANCES, settings.drawDistance),
                 i -> settings.drawDistance = DISTANCES[i]));
         column.addView(heading("CPU"));
-        column.addView(choices(CORE_LABELS, settings.fastCores ? 0 : 1, i -> settings.fastCores = i == 0));
+        column.addView(choices(CORE_LABELS, settings.fastCores ? 1 : 0, i -> settings.fastCores = i == 1));
         column.addView(heading("Display refresh rate"));
         column.addView(choices(RATE_LABELS, indexOf(RATES, settings.refreshRate),
                 i -> settings.refreshRate = RATES[i]));
@@ -163,7 +164,12 @@ public class LauncherActivity extends Activity {
                     + "The converted data goes to " + GameSettings.SHARED_ROOT + "/data. "
                     + "Skate 3 assets are not included with this app.");
         }
-        log.setText(lastExit() + "\n" + tail(new File(root, "logs/latest.log"), 16000));
+        File marker = new File(root, "logs/run-in-progress.txt");
+        String unfinished = marker.isFile()
+                ? "WARNING: the last run did not finish (the game was killed or the phone restarted).\n"
+                  + "Settings it used: " + tail(marker, 400).trim() + "\n"
+                : "";
+        log.setText(unfinished + lastExit() + "\n" + tail(new File(root, "logs/latest.log"), 16000));
     }
 
     /** Why Android ended the previous run: crash, native crash, low memory... */
